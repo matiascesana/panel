@@ -1404,6 +1404,22 @@ button[onclick*="delete"] {
 
 
 
+// Variable global para evitar recargas innecesarias
+window.appCache = {
+    categorias: [],
+    promos: []
+};
+
+// Carga esto SOLO una vez al iniciar la app
+async function initAppData() {
+    const { data: cat } = await supabase.from("categorias").select("id, nombre");
+    const { data: pro } = await supabase.from("promociones").select("*");
+    window.appCache.categorias = cat || [];
+    window.appCache.promos = pro || [];
+}
+
+
+
 // Limpiar filtros y mostrar todo
 function limpiarFiltrosGastos() {
     document.getElementById('filtroFechaDesde').value = '';
@@ -1415,13 +1431,18 @@ function limpiarFiltrosGastos() {
 
 
 
+/**
+ * Versión optimizada: selectivo, eficiente con el DOM y con mejor rendimiento
+ */
 async function renderizarListaGastos() {
     const desde = document.getElementById('filtroGastoDesde')?.value;
     const hasta = document.getElementById('filtroGastoHasta')?.value;
-
+    const contenedor = document.getElementById('listaGastosRecientes');
+    
+    // 1. SELECT SELECTIVO: Solo pedimos lo que realmente usamos
     let query = supabase
         .from('gastos')
-        .select('*')
+        .select('id, fecha, detalle, monto, metodo_pago, cuenta_origen')
         .order('fecha', { ascending: false });
 
     if (desde) query = query.gte('fecha', desde);
@@ -1434,56 +1455,42 @@ async function renderizarListaGastos() {
         return alert("Error al cargar gastos");
     }
 
-    const contenedor = document.getElementById('listaGastosRecientes');
-    contenedor.innerHTML = '';
-
+    // 2. EFICIENCIA DOM: Creamos un fragmento en memoria para renderizar una sola vez
+    const fragment = document.createDocumentFragment();
     let total = 0;
 
     gastos.forEach(g => {
         total += parseFloat(g.monto);
-
         let metodo = g.metodo_pago || '—';
-
         if (metodo.toLowerCase() === 'transferencia') {
             metodo = `Transferencia (${g.cuenta_origen || 'Sin cuenta'})`;
         }
 
-        contenedor.innerHTML += `
-    <div style="padding:10px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
+        // Crear contenedor individual
+        const div = document.createElement('div');
+        div.style.cssText = "padding:10px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;";
         
-        <div>
-            <b>${g.fecha.split('-').reverse().join('/')}</b> - ${g.detalle}
-            <br>
-            <small>${metodo}</small>
-        </div>
-
-        <div style="display:flex; align-items:center; gap:10px;">
-            <div style="font-weight:bold;">
-                $${parseFloat(g.monto).toLocaleString('es-AR')}
+        div.innerHTML = `
+            <div>
+                <b>${g.fecha.split('-').reverse().join('/')}</b> - ${g.detalle}
+                <br><small>${metodo}</small>
             </div>
-
-            <button 
-                onclick="eliminarGasto(${g.id})"
-                style="
-                    background:#ef4444;
-                    color:white;
-                    border:none;
-                    padding:6px 10px;
-                    border-radius:6px;
-                    cursor:pointer;
-                ">
-                🗑️
-            </button>
-        </div>
-
-    </div>
-`;
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="font-weight:bold;">$${parseFloat(g.monto).toLocaleString('es-AR')}</div>
+                <button onclick="eliminarGasto(${g.id})" style="background:#ef4444; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer;">🗑️</button>
+            </div>
+        `;
+        
+        fragment.appendChild(div);
     });
+
+    // 3. ACTUALIZACIÓN ÚNICA: Vaciamos y añadimos el fragmento de una sola vez
+    contenedor.innerHTML = '';
+    contenedor.appendChild(fragment);
 
     document.getElementById('totalGastosTexto').textContent =
         `$${total.toLocaleString('es-AR')}`;
 }
-
 
 
 
@@ -1750,8 +1757,8 @@ document.getElementById("imageModal").addEventListener("click", () => {
    ========================================================= */
 // Usamos un nombre diferente para la instancia (supabaseClient) 
 // para evitar conflictos con el objeto global 'window.supabase' de la librería.
-const SUPABASE_URL = "https://ejbqlejlgprvwzrptojo.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVqYnFsZWpsZ3Bydnd6cnB0b2pvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwMjkwMjIsImV4cCI6MjA3MjYwNTAyMn0.9fVItJka0MN3nlfowVudIE0AuNmfTJGQcbbqpau2Th8";
+const SUPABASE_URL = "https://rgbjinmllhhymczumwhs.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJnYmppbm1sbGhoeW1jenVtd2hzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNDA5MDcsImV4cCI6MjA3ODYxNjkwN30.y7uSk4gEVJNbPvuLDC0ZXOyA8OhogptbKAofodxgV1w";
 
 // Opción ultra-segura: solo declarar si no existe
 if (typeof supabaseClient === 'undefined') {
@@ -5578,7 +5585,7 @@ async function exportPedidoPDF(pedido) {
         // ==============================
         // 🖼️ Cargar logo desde Supabase
         // ==============================
-        const logoURL = "https://ejbqlejlgprvwzrptojo.supabase.co/storage/v1/object/public/promo_images/logodistribuidora.png";
+        const logoURL = "https://rgbjinmllhhymczumwhs.supabase.co/storage/v1/object/public/promo_images/logodistribuidora.png";
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.src = logoURL;
@@ -6539,67 +6546,96 @@ function exportSalesPDF() {
 }
 
 /**
- * Realiza la búsqueda en todas las categorías y renderiza la edición rápida
+ * Realiza la búsqueda optimizada (Debouncing + Local Cache)
  */
 async function handleQuickSearch(term) {
     const listContainer = document.getElementById('quickSearchList');
     const resultsWrapper = document.getElementById('quickSearchResults');
 
-    // Cambiado 'query' por 'term' que es lo que recibe la función
+    // 1. Aplicamos Debouncing: esperamos 500ms antes de ejecutar
+    clearTimeout(searchTimer);
     if (!term || term.length < 2) {
         resultsWrapper.style.display = 'none';
-        listContainer.innerHTML = ''; 
+        listContainer.innerHTML = '';
         return;
     }
 
-    try {
-        const { data, error } = await supabase
-            .from('promociones')
-            .select('*')
-            .ilike('nombre', `%${term}%`) // Usamos 'term'
-            .limit(10);
+    searchTimer = setTimeout(async () => {
+        try {
+            // 2. Si el cache está vacío, descargamos una vez. Si no, usamos el cache.
+            if (promosCache.length === 0) {
+                const { data, error } = await supabase
+                    .from('promociones')
+                    .select('id, nombre, precio, precio_anterior, stock') // Seleccionamos solo lo necesario
+                    .limit(500); // Traemos una cantidad razonable para tener en memoria
 
-        if (error) throw error;
+                if (error) throw error;
+                promosCache = data || [];
+            }
 
-        resultsWrapper.style.display = 'block';
+            // 3. Filtramos localmente (0 consultas a Supabase en este punto)
+            const filteredData = promosCache.filter(p => 
+                p.nombre.toLowerCase().includes(term.toLowerCase())
+            ).slice(0, 10);
 
-        if (data && data.length > 0) {
-            listContainer.innerHTML = data.map(p => `
-                <div class="quick-card">
-                    <div class="quick-grid-top">
-                        <div class="quick-field">
-                            <label>NOMBRE</label>
-                            <input type="text" id="qs-name-${p.id}" value="${p.nombre}">
+            resultsWrapper.style.display = 'block';
+
+            if (filteredData.length > 0) {
+                listContainer.innerHTML = filteredData.map(p => `
+                    <div class="quick-card">
+                        <div class="quick-grid-top">
+                            <div class="quick-field">
+                                <label>NOMBRE</label>
+                                <input type="text" id="qs-name-${p.id}" value="${p.nombre}">
+                            </div>
+                            <div class="quick-field">
+                                <label>PRECIO ANTERIOR ($)</label>
+                                <input type="number" id="qs-oldprice-${p.id}" value="${p.precio_anterior || 0}">
+                            </div>
                         </div>
-                        <div class="quick-field">
-                            <label>PRECIO ANTERIOR ($)</label>
-                            <input type="number" id="qs-oldprice-${p.id}" value="${p.precio_anterior || 0}">
+                        <div class="quick-grid-bottom">
+                            <div class="quick-field">
+                                <label>PRECIO ACTUAL ($)</label>
+                                <input type="number" id="qs-price-${p.id}" value="${p.precio}">
+                            </div>
+                            <div class="quick-field">
+                                <label>STOCK</label>
+                                <input type="number" id="qs-stock-${p.id}" value="${p.stock}">
+                            </div>
+                            <div class="quick-actions">
+                                <button onclick="saveQuickEdit('${p.id}')" class="quick-save">
+                                    💾 Guardar
+                                </button>
+                            </div>
                         </div>
                     </div>
-                    <div class="quick-grid-bottom">
-                        <div class="quick-field">
-                            <label>PRECIO ACTUAL ($)</label>
-                            <input type="number" id="qs-price-${p.id}" value="${p.precio}">
-                        </div>
-                        <div class="quick-field">
-                            <label>STOCK</label>
-                            <input type="number" id="qs-stock-${p.id}" value="${p.stock}">
-                        </div>
-                        <div class="quick-actions">
-                            <button onclick="saveQuickEdit('${p.id}')" class="quick-save">
-                                💾 Guardar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        } else {
-            listContainer.innerHTML = "<p class='quick-no-results'>No se encontraron productos.</p>";
+                `).join('');
+            } else {
+                listContainer.innerHTML = "<p class='quick-no-results'>No se encontraron productos.</p>";
+            }
+        } catch (err) {
+            console.error("Error en buscador:", err);
         }
-    } catch (err) {
-        console.error("Error en buscador:", err);
-    }
+    }, 500); // 500ms de espera
 }
+
+
+function renderizarResultadosBusqueda(list) {
+    const listContainer = document.getElementById('quickSearchList');
+    listContainer.innerHTML = list.map(p => `<div>${p.nombre} - $${p.precio}</div>`).join('');
+}
+
+
+
+function filtrarPromosPorCategoria(categoryId) {
+    // Filtramos localmente el array cacheado
+    const filtrados = categoryId === '' 
+        ? window.appCache.promos 
+        : window.appCache.promos.filter(p => p.categoria_id == categoryId);
+        
+    renderPromoGrid(filtrados); // Función que renderiza el HTML
+}
+
 
 
 async function saveQuickEdit(id) {
@@ -7256,7 +7292,13 @@ function toggleCuentasGasto() {
     divCuenta.style.display = (metodo === 'Transferencia') ? 'block' : 'none';
 }
 
+// Variable global para controlar el estado de envío
+let isSaving = false;
+
 async function guardarGasto() {
+    // 1. Evitamos la ejecución si ya hay una petición en curso
+    if (isSaving) return;
+
     const desc = document.getElementById('gastoDesc').value.trim();
     const monto = parseFloat(document.getElementById('gastoMonto').value);
     const metodo = document.getElementById('gastoMetodo').value;
@@ -7267,6 +7309,9 @@ async function guardarGasto() {
         alert("Por favor complete descripción y monto.");
         return;
     }
+
+    // 2. Activamos el bloqueo
+    isSaving = true;
 
     try {
         const { error } = await supabase
@@ -7282,15 +7327,21 @@ async function guardarGasto() {
         if (error) throw error;
 
         cerrarModalGasto();
-        await renderizarListaGastos(); // Recarga el total en la parte superior
+        
+        // 3. Recarga inteligente: si puedes, limpia solo el formulario 
+        // en lugar de volver a consultar TODA la tabla si no es estrictamente necesario
+        await renderizarListaGastos(); 
+        
         if (typeof showToast === 'function') showToast("✅ Gasto registrado");
         
     } catch (error) {
         console.error("Error:", error);
         alert("Error al guardar el gasto");
+    } finally {
+        // 4. Liberamos el bloqueo ocurra lo que ocurra (éxito o error)
+        isSaving = false;
     }
 }
-
 
 
 

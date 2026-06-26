@@ -953,8 +953,8 @@ button[onclick*="delete"] {
     <label style="font-weight: bold; display: block; margin-bottom: 5px;">🔍 Buscador de Edición Rápida:</label>
     <input type="text" id="quickSearchInput" placeholder="Escribe el nombre de un producto..." 
         style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px;"
-        oninput="handleQuickSearch(this.value)" 
-    </div>
+        oninput="handleQuickSearch(this.value)">
+</div>
 <div id="quickSearchResults" style="display:none; background: #f9f9f9; padding: 15px; border-radius: 8px; border: 1px solid #eee;">
     <div id="quickSearchList"></div>
 </div>
@@ -1078,33 +1078,33 @@ button[onclick*="delete"] {
 <section id="pedidos" class="section">
 <h2>Pedidos Activos</h2>
 
-<div style="margin-bottom: 20px; padding: 10px; background: #fff; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-    <label for="orderSearch" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">Buscar Cliente:</label>
-    <input 
-        type="text" 
-        id="orderSearch" 
-        placeholder="Escriba nombre, apellido o DNI del cliente..." 
-        oninput="debounceFetchOrders()"
-        style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 1em;"
-    >
+<div style="margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;">
+    <div style="flex: 1; min-width: 200px;">
+        <label for="pedidoLocalidadFilter" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">📍 Filtrar por Localidad:</label>
+        <select id="pedidoLocalidadFilter" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 1em; background: #f8fafc;">
+            <option value="">— Seleccione una localidad para cargar pedidos —</option>
+        </select>
+    </div>
+    <div style="flex: 1; min-width: 200px;">
+        <label for="orderSearch" style="display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;">🔍 Buscar Cliente:</label>
+        <input 
+            type="text" 
+            id="orderSearch" 
+            placeholder="Nombre, apellido o DNI..." 
+            oninput="debounceFetchOrders()"
+            style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; font-size: 1em;"
+        >
+    </div>
+    <button onclick="fetchOrders()" style="padding: 10px 20px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; height: 42px;">Buscar</button>
 </div>
 <div id="totalesPedidos"></div>
 <div id="pedidoList"></div>
 </div>
-
 <h2 style="display:none;">Lista de Pedidos</h2>
 <div id="pedidoListDuplicate" style="display:none;"></div>
-	<div id="botonArchivarMesActual" style="margin-top:25px; text-align: right;">
-    <button id="archiveButton" onclick="archiveCurrentMonthOrders()" class="action-button" style="background-color: #f39c12; padding: 10px 20px;">
-        📦 Archivar Pedidos del Mes Actual
-    </button>
-</div>
-	</div>
-	</div>
+	
 
-
-
-
+	
 <section id="pedidosArchivados" class="section" style="display:none;">
     <h2>Pedidos Archivados</h2>
 
@@ -2195,15 +2195,17 @@ let editingOrderId = null;
 let pedidoSeleccionado = null;
 let promociones = [];
 let categorias = [];
-let localidadSeleccionada = null; // Para la confirmación del pedido
-// Variables específicas de la tienda cliente
+let localidadSeleccionada = null;
 let carritoCliente = [];
-let promocionesGlobal = []; // Contiene todas las promos de la categoría actual
+let promocionesGlobal = [];
 let categoriaTiendaActual = null;
 let lastOrdersScrollPosition = 0;
 
+// Variables para el buscador de edición rápida
+let promosCache = [];
+let searchTimer = null;
 
-// Variable para controlar el retraso de la búsqueda (debounce)
+// Variable para controlar el retraso de la búsqueda de pedidos (debounce)
 let debounceTimer;
 
 function debounceFetchOrders() {
@@ -3552,38 +3554,54 @@ if (typeof isFetchingOrders === 'undefined') {
 
 
 async function fetchOrders() {
-  if (isFetchingOrders) return;
-  isFetchingOrders = true;
+  if (isFetchingOrders) return;
+  isFetchingOrders = true;
 
- try {
-    const container = document.getElementById("pedidoList");
-    
-    // 💡 IDENTIFICAR EL ELEMENTO DE SCROLL
+ try {
+    const container = document.getElementById("pedidoList");
     const scrollTarget = document.querySelector('.content') || document.documentElement;
 
-    // 💡 Obtener término de búsqueda
     const searchInput = document.getElementById("orderSearch");
     const searchTerm = searchInput ? searchInput.value.trim() : "";
 
-    // PASO 1: GUARDAR o RESETEAR la posición de scroll
-    // Si hay búsqueda, forzamos a 0. Si no, mantenemos la posición.
-    lastOrdersScrollPosition = searchTerm ? 0 : scrollTarget.scrollTop;
-    
-    container.innerHTML = ""; 
-    // 💡 IMPORTANTE: Limpiamos el contenedor de totales/resultados al inicio de CADA llamada
-    document.getElementById("totalesPedidos").innerHTML = ""; 
+    const localidadFilterEl = document.getElementById("pedidoLocalidadFilter");
+    const localidadFilterId = localidadFilterEl ? localidadFilterEl.value : "";
 
-    // 1️⃣ Construir la consulta base
+    // Si no hay localidad seleccionada y no hay búsqueda, no cargar nada
+    if (!localidadFilterId && !searchTerm) {
+        container.innerHTML = '<p style="color:#888; padding:20px;">👆 Seleccioná una localidad o escribí un nombre para ver los pedidos.</p>';
+        document.getElementById("totalesPedidos").innerHTML = "";
+        isFetchingOrders = false;
+        return;
+    }
+
+    lastOrdersScrollPosition = searchTerm ? 0 : scrollTarget.scrollTop;
+    container.innerHTML = "";
+    document.getElementById("totalesPedidos").innerHTML = "";
+
+    // 1️⃣ Construir la consulta base
     let query = supabase
-        .from("pedidos")
-        .select("*")
-        .eq("archivado", false)
-        .order("id", { ascending: true });
-    
-    // 💡 Aplicar filtro de búsqueda si hay un término
+        .from("pedidos")
+        .select("*")
+        .eq("archivado", false)
+        .order("id", { ascending: true });
+
+    // Aplicar filtro de localidad
+    if (localidadFilterId) {
+        query = query.eq("localidad_id", localidadFilterId);
+    }
+
+    // Aplicar filtro de búsqueda por nombre (SOLO por cliente, sin OR en dni que causa 404)
     if (searchTerm) {
-        // Usamos 'ilike' (case-insensitive LIKE) para buscar el término en los campos 'cliente' o 'dni'.
-        query = query.or(`cliente.ilike.%${searchTerm}%,dni.ilike.%${searchTerm}%`);
+        // Buscamos por cliente con ilike; si parece un número, también filtramos por DNI por separado
+        const isNumeric = /^\d+$/.test(searchTerm);
+        if (isNumeric) {
+            // Es un número: buscar solo por DNI (cast a texto)
+            query = query.ilike("dni", `%${searchTerm}%`);
+        } else {
+            // Es texto: buscar solo por nombre de cliente
+            query = query.ilike("cliente", `%${searchTerm}%`);
+        }
     }
 
     // 2️⃣ Ejecutar la consulta
@@ -6035,6 +6053,29 @@ function escapeHtml(str) {
 
 
 // ================= LOCALIDADES =================
+
+async function poblarSelectLocalidadesPedidos() {
+    const sel = document.getElementById("pedidoLocalidadFilter");
+    if (!sel) return;
+    try {
+        const { data, error } = await supabase.from("localidades").select("id, nombre").order("nombre");
+        if (error) throw error;
+        sel.innerHTML = '<option value="">— Seleccione una localidad para cargar pedidos —</option>';
+        if (data) {
+            data.forEach(l => {
+                const opt = document.createElement('option');
+                opt.value = l.id;
+                opt.textContent = l.nombre;
+                sel.appendChild(opt);
+            });
+        }
+        // Al cambiar localidad, recargar pedidos automáticamente
+        sel.onchange = () => fetchOrders();
+    } catch (err) {
+        console.error("Error cargando localidades para filtro:", err);
+    }
+}
+
 async function fetchLocalidades() {
   const { data, error } = await supabase.from("localidades").select("*").order("id");
   if (error) return console.error(error);
@@ -6216,11 +6257,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     //    aquí para evitar otros errores de "not defined" si los usas al inicio)
   
     fetchLocalidades();
-    fetchPromos(); 
-    fetchOrders(); 
+    fetchPromos();
+    // NO llamar fetchOrders() al inicio — se carga solo cuando se elige localidad
     fetchDocumentos();
     loadPromoSubMenu();
-  setupArchiveFilters();
+    setupArchiveFilters();
+    poblarSelectLocalidadesPedidos();
 
 
 

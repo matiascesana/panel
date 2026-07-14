@@ -1096,6 +1096,7 @@ button[onclick*="delete"] {
         >
     </div>
     <button onclick="fetchOrders()" style="padding: 10px 20px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; height: 42px;">Buscar</button>
+    <button onclick="exportarListadoPedidosPDF()" style="padding: 10px 20px; background: #e67e22; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; height: 42px;">📄 Exportar Listado PDF</button>
 </div>
 <div id="totalesPedidos"></div>
 <div id="pedidoList"></div>
@@ -3706,6 +3707,122 @@ if (typeof isFetchingOrders === 'undefined') {
 }
 
 
+async function exportarListadoPedidosPDF() {
+  try {
+    const datos = window.ultimoListadoPedidos;
+    if (!datos || !datos.localidadesOrdenadas || !datos.localidadesOrdenadas.length) {
+      alert("Primero buscá o filtrá pedidos para poder exportar el listado.");
+      return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF("l", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const marginX = 10;
+
+    doc.setFontSize(16);
+    doc.setFont(undefined, "bold");
+    doc.text("Listado de Pedidos por Localidad", marginX, 14);
+    doc.setFontSize(10);
+    doc.setFont(undefined, "normal");
+    doc.text(
+      `Generado el ${new Date().toLocaleDateString("es-AR")} a las ${new Date().toLocaleTimeString("es-AR")}`,
+      marginX,
+      20
+    );
+
+    let currentY = 28;
+
+    const { localidadesOrdenadas, pedidosPorLocalidad } = datos;
+
+    for (const localidad of localidadesOrdenadas) {
+      const pedidosDeLocalidad = [...pedidosPorLocalidad[localidad]].sort((a, b) => {
+        if (a.estado !== b.estado) return a.estado === "pendiente" ? -1 : 1;
+        return (a.cliente || "").localeCompare(b.cliente || "", "es", { sensitivity: "base" });
+      });
+
+      if (currentY > doc.internal.pageSize.getHeight() - 30) {
+        doc.addPage();
+        currentY = 14;
+      }
+
+      doc.setFillColor(52, 152, 219);
+      doc.rect(marginX, currentY - 5, pageWidth - marginX * 2, 8, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(12);
+      doc.setFont(undefined, "bold");
+      doc.text(localidad, marginX + 2, currentY);
+      doc.setTextColor(0, 0, 0);
+      currentY += 8;
+
+      const filas = pedidosDeLocalidad.map(p => {
+        const fechaPedido = p.created_at ? new Date(p.created_at).toLocaleDateString("es-AR") : "Sin fecha";
+        const montoTotal = Number(p.total) || 0;
+
+        // Detalle de promociones/productos del pedido, igual que se ve en pantalla
+        let promoTexto = "Sin detalle de promociones";
+        if (Array.isArray(p.productos) && p.productos.length > 0) {
+          promoTexto = p.productos.map(pr => {
+            const cant = pr.cantidad || 1;
+            const subtotal = (Number(pr.precio) || 0) * cant;
+            return `${pr.nombre || "-"} x${cant} - $${subtotal.toLocaleString("es-AR")}`;
+          }).join("\n");
+        } else if (typeof p.productos === "string" && p.productos.trim() !== "") {
+          promoTexto = p.productos;
+        }
+
+        let pagosTexto = "Sin pagos registrados";
+        if (Array.isArray(p.pagos) && p.pagos.length > 0) {
+          pagosTexto = p.pagos.map(pg => {
+            let metodoTexto = pg.metodo || "-";
+            if (pg.metodo === "Transferencia" && pg.destinatario && pg.destinatario.trim() !== "") {
+              metodoTexto += ` (${pg.destinatario})`;
+            }
+            return `$${Number(pg.monto || 0).toLocaleString("es-AR")} - ${metodoTexto}`;
+          }).join("\n");
+        }
+
+        const preparadoTexto = p.preparado ? "Preparado" : "Sin preparar";
+        const entregaTexto = p.estado === "entregado" ? "Entregado" : "Pendiente";
+        const estadoTexto = `${preparadoTexto}\n${entregaTexto}`;
+
+        return [
+          p.cliente || "-",
+          fechaPedido,
+          promoTexto,
+          `$${montoTotal.toLocaleString("es-AR")}`,
+          pagosTexto,
+          estadoTexto
+        ];
+      });
+
+      doc.autoTable({
+        startY: currentY,
+        head: [["Cliente", "Fecha", "Promociones / Productos", "Total", "Pagos recibidos", "Estado"]],
+        body: filas,
+        margin: { left: marginX, right: marginX },
+        styles: { fontSize: 8.5, cellPadding: 3, valign: "middle" },
+        headStyles: { fillColor: [44, 62, 80], textColor: 255, fontStyle: "bold" },
+        columnStyles: {
+          0: { cellWidth: 34 },
+          1: { cellWidth: 20 },
+          2: { cellWidth: "auto" },
+          3: { cellWidth: 22 },
+          4: { cellWidth: 55 },
+          5: { cellWidth: 26 }
+        }
+      });
+
+      currentY = doc.lastAutoTable.finalY + 12;
+    }
+
+    doc.save(`Listado_Pedidos_${new Date().toISOString().slice(0, 10)}.pdf`);
+  } catch (err) {
+    console.error("Error al exportar listado PDF:", err);
+    alert("No se pudo generar el PDF: " + err.message);
+  }
+}
+
 async function fetchOrders() {
   if (isFetchingOrders) return;
   isFetchingOrders = true;
@@ -3812,6 +3929,8 @@ async function fetchOrders() {
     const localidadesOrdenadas = Object.keys(pedidosPorLocalidad).sort((a, b) =>
       a.localeCompare(b, "es", { sensitivity: "base" })
     );
+
+    window.ultimoListadoPedidos = { localidadesOrdenadas, pedidosPorLocalidad };
 
     // 5️⃣ Renderizar
     for (const localidad of localidadesOrdenadas) {
@@ -4818,7 +4937,7 @@ function renderizarListaEdicionPagos() {
         item.style = "background:#f8fafc; padding:12px; margin-bottom:10px; border-radius:10px; border:1px solid #e2e8f0; display:grid; grid-template-columns: 1fr 1fr; gap:8px;";
         
         item.innerHTML = `
-    <input type="date" value="${pago.fecha}" id="editFecha_${idx}" style="padding:5px; border-radius:5px; border:1px solid #ddd;">
+    <input type="date" value="${normalizarFechaPago(pago.fecha)}" id="editFecha_${idx}" style="padding:5px; border-radius:5px; border:1px solid #ddd;">
     
     <input type="number" value="${pago.monto}" id="editMonto_${idx}" style="padding:5px; border-radius:5px; border:1px solid #ddd;">
     
@@ -4910,13 +5029,17 @@ async function cargarReporteIngresos() {
         return;
     }
 
-    const { data, error } = await supabase.rpc('pedidos_por_rango', {
-        fecha_desde: desde,
-        fecha_hasta: hasta
-    });
+    // Traemos los pedidos directamente (sin depender de la función RPC
+    // 'pedidos_por_rango', que no existe en la base). El filtrado por
+    // fecha de pago se hace igual que antes, del lado del cliente,
+    // recorriendo el array 'pagos' de cada pedido.
+    const { data, error } = await supabase
+        .from('pedidos')
+        .select('cliente, pagos');
 
     if (error) {
-        console.error("Error RPC:", error);
+        console.error("Error al cargar pedidos:", error);
+        alert("Error al cargar los ingresos: " + error.message);
         return;
     }
 
@@ -4940,7 +5063,9 @@ async function cargarReporteIngresos() {
         pagosArray.forEach(pago => {
             if (!pago.fecha) return;
 
-            if (pago.fecha >= desde && pago.fecha <= hasta) {
+            const fechaPago = normalizarFechaPago(pago.fecha);
+
+            if (fechaPago >= desde && fechaPago <= hasta) {
 
                 const monto = parseFloat(pago.monto || 0);
                 const metodo = pago.metodo || "Efectivo";
@@ -4949,7 +5074,7 @@ async function cargarReporteIngresos() {
                 else trans += monto;
 
                 listaFiltrada.push({
-    fecha: pago.fecha,
+    fecha: fechaPago,
     cliente: p.cliente,
     metodo: metodo,
     monto: monto,
@@ -5006,8 +5131,17 @@ async function cargarReporteIngresos() {
 
 
 	function parseFechaLocal(fechaStr) {
-    const [year, month, day] = fechaStr.split("-");
+    const [year, month, day] = normalizarFechaPago(fechaStr).split("-");
     return new Date(year, month - 1, day);
+}
+
+// Los pagos pueden venir con formato "YYYY-MM-DD" (nuevo) o con datetime
+// completo tipo "YYYY-MM-DDTHH:mm:ss.sssZ" (formato viejo). Esta función
+// se queda siempre con la parte de la fecha, para que los filtros por
+// rango y los inputs type="date" funcionen igual con ambos formatos.
+function normalizarFechaPago(fechaStr) {
+    if (!fechaStr) return fechaStr;
+    return String(fechaStr).slice(0, 10);
 }
 
 function actualizarUIFianzas(efec, trans, desde, hasta, lista) {
@@ -7165,7 +7299,7 @@ async function eliminarPagoExistente(index) {
 
    pedidoSeleccionado.pagos = historialActual;
         renderizarListaEdicionPagos(); // Esto actualizará el saldo restante en el modal
-        actualizarDeudaHistoricaCliente(pedidoSeleccionado.cliente); // Actualizar deuda total
+        calcularDeudaTotalCliente(pedidoSeleccionado.cliente); // Actualizar deuda total
    renderizarListaEdicionPagos();
         
         if (typeof actualizarPedidoEnDOM === 'function') actualizarPedidoEnDOM(pedidoSeleccionado);

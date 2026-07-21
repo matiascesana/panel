@@ -7004,6 +7004,29 @@ async function saveQuickEdit(id) {
    ========================================================= */
 
 async function fetchCuentasCorrientes() {
+    // Tras guardar/editar/eliminar un pago, NO recargamos ni mostramos todos los
+    // clientes. Dejamos el buscador limpio para forzar una nueva búsqueda por nombre
+    // (esto evita consultas masivas a Supabase).
+    const searchInput = document.getElementById('ctaCteSearch');
+    const listDiv = document.getElementById('ctaCteList');
+
+    if (searchInput) searchInput.value = '';
+
+    if (listDiv) {
+        listDiv.innerHTML = `
+            <tr>
+                <td colspan="4" style="text-align:center;padding:20px;">
+                    🔍 Escriba al menos 3 letras para buscar
+                </td>
+            </tr>
+        `;
+    }
+    return;
+}
+
+async function fetchCuentasCorrientesTodas() {
+    // Versión original (trae TODO). Se deja disponible por si se necesita
+    // en otro contexto, pero ya no se llama automáticamente tras guardar un pago.
     const listDiv = document.getElementById('ctaCteList');
     listDiv.innerHTML = '<p style="text-align:center;">Cargando cuentas...</p>';
 
@@ -7236,8 +7259,7 @@ async function guardarNuevoPagoCC() {
             .from('pedidos')
             .update({ 
                 pagos: nuevoHistorial, 
-                saldo_pendiente: nuevoSaldo,
-                fecha_pago: fechaLimpia 
+                saldo_pendiente: nuevoSaldo
             })
             .eq('id', pedidoSeleccionado.id);
 

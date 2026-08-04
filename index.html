@@ -945,6 +945,9 @@ button[onclick*="delete"] {
 <button id="addPromoBtn" onclick="abrirModalNuevaPromo()" style="background:var(--primary); color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; margin-bottom:15px;">
     ➕ Nueva Promoción
 </button>
+<span id="contadorPromosTotal" style="display:inline-block; margin-left:12px; margin-bottom:15px; background:#2c3e50; color:#fff; padding:9px 18px; border-radius:8px; font-weight:bold; font-size:0.95em; vertical-align:middle;">
+    📦 Cargando cantidad de promociones...
+</span>
         <div id="promos" class="section active">
 	<div style="margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 8px; border: 1px solid #ddd;">
        
@@ -1098,6 +1101,7 @@ button[onclick*="delete"] {
     <button onclick="fetchOrders()" style="padding: 10px 20px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; height: 42px;">Buscar</button>
     <button onclick="exportarListadoPedidosPDF()" style="padding: 10px 20px; background: #e67e22; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; height: 42px;">📄 Exportar Listado PDF</button>
 </div>
+<div id="resumenLocalidadesPedidos" style="margin-bottom: 18px; display:flex; flex-wrap:wrap; gap:10px;"></div>
 <div id="totalesPedidos"></div>
 <div id="pedidoList"></div>
 </div>
@@ -1680,6 +1684,8 @@ async function guardarNuevaPromo() {
         if (insertError) throw insertError;
 
         if (typeof showToast === 'function') showToast("✅ Promoción creada con éxito");
+        actualizarContadorPromosTotal();
+        promosCache = []; // Invalida el cache de búsqueda rápida
 
         // LIMPIEZA
         document.getElementById('addPromoModal').style.display = 'none';
@@ -1858,9 +1864,13 @@ async function renderCtaCte() {
                     $${c.saldo.toLocaleString('es-AR')}
                 </td>
 
-                <td style="text-align:center;">
-                    <button onclick="verDetalleCtaCte('${c.dni}')">
+                <td style="text-align:center; white-space:nowrap;">
+                    <button onclick="verDetalleCtaCte('${c.dni || c.nombre}')">
                         Ver detalle
+                    </button>
+                    <button onclick="abrirModalPagoCtaCte('${(c.dni || c.nombre)}', '${c.nombre.replace(/'/g, '\\\'' )}', ${c.saldo})"
+                        style="background:#10b981; color:#fff; border:none; padding:8px 10px; border-radius:6px; cursor:pointer; margin-left:6px;">
+                        💰 Cargar Pago
                     </button>
                 </td>
             </tr>
@@ -2012,6 +2022,171 @@ function cerrarModalCtaCte() {
     const modal = document.getElementById('modalCtaCte');
     if (modal) modal.style.display = 'none';
 }
+
+/* =========================================================
+   PAGO RAPIDO DESDE CUENTA CORRIENTE
+   Permite cargar un pago del cliente sin tener que abrir
+   pedido por pedido. El monto se aplica automaticamente a
+   los pedidos con saldo pendiente, del mas antiguo al mas
+   nuevo (FIFO), actualizando pagos y saldo_pendiente de cada
+   pedido igual que si se hubiera cargado desde el pedido.
+   ========================================================= */
+
+let clienteCtaCteActual = null; // { identificador, nombre, saldoTotal }
+
+function abrirModalPagoCtaCte(identificador, nombre, saldoTotal) {
+    clienteCtaCteActual = { identificador, nombre, saldoTotal: Number(saldoTotal) || 0 };
+
+    const html = `
+        <div style="text-align:left; font-family:sans-serif; padding:15px;">
+            <h3 style="margin-top:0;">💰 Registrar Pago - ${nombre}</h3>
+
+            <div style="background:#fff5f5; padding:15px; border-radius:8px; border:1px solid #feb2b2; text-align:center; margin-bottom:15px;">
+                <span style="color:#c53030; font-size:12px; font-weight:bold;">SALDO TOTAL EN CUENTA CORRIENTE</span><br>
+                <span style="font-size:24px; font-weight:bold; color:#e74c3c;">$${clienteCtaCteActual.saldoTotal.toLocaleString('es-AR')}</span>
+            </div>
+
+            <div style="background:#f8f9fa; padding:15px; border-radius:8px; border:1px solid #ddd;">
+                <label style="font-size:13px; font-weight:bold;">Fecha del pago</label>
+                <input type="date" id="pagoCtaCteFecha" style="width:100%; padding:10px; margin:6px 0 12px 0; border:1px solid #ccc; border-radius:4px;">
+
+                <label style="font-size:13px; font-weight:bold;">Monto a pagar</label>
+                <input type="number" id="pagoCtaCteMonto" placeholder="Monto $" style="width:100%; padding:10px; margin:6px 0 12px 0; border:1px solid #ccc; border-radius:4px;">
+
+                <label style="font-size:13px; font-weight:bold;">Metodo de pago</label>
+                <select id="pagoCtaCteMetodo" style="width:100%; padding:10px; margin:6px 0 12px 0; border:1px solid #ccc; border-radius:4px;"
+                        onchange="document.getElementById('wrapperPagoCtaCteDestinatario').style.display = (this.value === 'Transferencia') ? 'block' : 'none'">
+                    <option value="Efectivo">Efectivo</option>
+                    <option value="Transferencia">Transferencia</option>
+                </select>
+
+                <div id="wrapperPagoCtaCteDestinatario" style="display:none; margin-bottom:12px;">
+                    <input type="text" id="pagoCtaCteDestinatario" placeholder="Nombre del destinatario / Cuenta"
+                           style="width:100%; padding:10px; border:1px solid #ccc; border-radius:4px;">
+                </div>
+
+                <p style="font-size:12px; color:#888; margin:0 0 12px 0;">
+                    El pago se aplica automaticamente a los pedidos con saldo pendiente,
+                    empezando por el mas antiguo, hasta cubrir el monto ingresado.
+                </p>
+
+                <button onclick="confirmarPagoCtaCte()" style="width:100%; padding:10px; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">
+                    Guardar Pago
+                </button>
+            </div>
+
+            <button onclick="closeModal()" style="margin-top:15px; width:100%; border:none; padding:10px; cursor:pointer; background:#e2e8f0; border-radius:4px;">Cerrar</button>
+        </div>
+    `;
+
+    openModal(html);
+    document.getElementById('pagoCtaCteFecha').value = new Date().toLocaleDateString('sv-SE');
+}
+
+async function confirmarPagoCtaCte() {
+    if (!clienteCtaCteActual) return;
+
+    const montoInput = document.getElementById('pagoCtaCteMonto');
+    const fechaInput = document.getElementById('pagoCtaCteFecha');
+    const metodoInput = document.getElementById('pagoCtaCteMetodo');
+    const destinatarioInput = document.getElementById('pagoCtaCteDestinatario');
+
+    let montoRestante = parseFloat(montoInput.value);
+    const metodo = metodoInput.value;
+    const destinatario = (metodo === 'Transferencia' && destinatarioInput) ? destinatarioInput.value : "";
+    const fechaRaw = fechaInput.value || new Date().toISOString();
+    const fecha = fechaRaw.substring(0, 10);
+
+    if (!montoRestante || montoRestante <= 0) return alert("Ingresa un monto valido.");
+
+    const { identificador } = clienteCtaCteActual;
+
+    try {
+        // Traer todos los pedidos con saldo pendiente de este cliente, del mas antiguo al mas nuevo
+        let query = supabase
+            .from('pedidos')
+            .select('*')
+            .gt('saldo_pendiente', 0)
+            .order('created_at', { ascending: true });
+
+        if (/^\d+$/.test(String(identificador))) {
+            query = query.eq('dni', identificador);
+        } else {
+            query = query.eq('cliente', identificador);
+        }
+
+        const { data: pedidos, error } = await query;
+        if (error) throw error;
+
+        if (!pedidos || pedidos.length === 0) {
+            return alert("Este cliente no tiene pedidos con saldo pendiente.");
+        }
+
+        const montoIngresado = montoRestante;
+        let pedidosAfectados = 0;
+
+        for (const p of pedidos) {
+            if (montoRestante <= 0) break;
+
+            const saldoPedido = Number(p.saldo_pendiente || 0);
+            if (saldoPedido <= 0) continue;
+
+            const aplicado = Math.min(saldoPedido, montoRestante);
+
+            let historialActual = [];
+            try {
+                historialActual = typeof p.pagos === 'string' ? JSON.parse(p.pagos) : (p.pagos || []);
+            } catch (e) {
+                historialActual = [];
+            }
+
+            const nuevoPago = {
+                monto: aplicado,
+                metodo,
+                destinatario,
+                fecha,
+                origen: 'Cuenta Corriente'
+            };
+
+            const nuevoHistorial = [...historialActual, nuevoPago];
+            const nuevoSaldo = Math.max(0, saldoPedido - aplicado);
+
+            const { error: errUpdate } = await supabase
+                .from('pedidos')
+                .update({
+                    pagos: nuevoHistorial,
+                    saldo_pendiente: nuevoSaldo
+                })
+                .eq('id', p.id);
+
+            if (errUpdate) throw errUpdate;
+
+            montoRestante -= aplicado;
+            pedidosAfectados++;
+        }
+
+        if (pedidosAfectados === 0) {
+            return alert("No se pudo aplicar el pago: no hay pedidos con saldo pendiente.");
+        }
+
+        let mensaje = `✅ Pago de $${montoIngresado.toLocaleString('es-AR')} registrado en ${pedidosAfectados} pedido(s).`;
+        if (montoRestante > 0) {
+            mensaje += `\n\n⚠️ El cliente no tenia suficiente deuda pendiente. Sobraron $${montoRestante.toLocaleString('es-AR')} sin aplicar.`;
+        }
+        alert(mensaje);
+
+        closeModal();
+        clienteCtaCteActual = null;
+
+        if (typeof renderCtaCte === 'function') renderCtaCte();
+        if (typeof fetchCuentasCorrientes === 'function') fetchCuentasCorrientes();
+
+    } catch (err) {
+        console.error(err);
+        alert("Error al guardar el pago: " + err.message);
+    }
+}
+
 
 
 
@@ -2186,6 +2361,7 @@ async function savePromotionChanges() {
 
         alert('✅ Promoción actualizada con éxito!');
         document.getElementById('editPromoModal').style.display = 'none';
+        promosCache = []; // Invalida el cache de búsqueda rápida para reflejar el cambio
 
         // 5. Recargar la lista para reflejar cambios
         // Se asume la existencia de renderPromosByFilter
@@ -2569,6 +2745,26 @@ function updateProgressBar(containerId, percent, text, keepVisible = true) {
 
 
 
+/**
+ * Muestra en un lugar visible (junto al botón "Nueva Promoción") la cantidad
+ * total de promociones/productos cargados actualmente en Supabase.
+ */
+async function actualizarContadorPromosTotal() {
+    const el = document.getElementById('contadorPromosTotal');
+    if (!el) return;
+    try {
+        const { count, error } = await supabase
+            .from('promociones')
+            .select('*', { count: 'exact', head: true });
+
+        if (error) throw error;
+        el.textContent = `📦 ${count ?? 0} promociones cargadas`;
+    } catch (err) {
+        console.error('Error al contar promociones:', err);
+        el.textContent = '📦 No se pudo obtener la cantidad';
+    }
+}
+
 /* =========================================================
    Promociones: carga y render (CORREGIDO PARA AGRUPACIÓN Y ESTILO)
    ========================================================= */
@@ -2944,6 +3140,8 @@ async function deletePromo(promoId) {
         } else {
             alert('✅ Promoción eliminada correctamente.');
         }
+        actualizarContadorPromosTotal();
+        promosCache = []; // Invalida el cache de búsqueda rápida
 
         // Intentar refrescar la lista sin recargar toda la página
         if (typeof renderPromosByFilter === 'function') {
@@ -3595,6 +3793,9 @@ function renderSelectedProducts(){
     c.innerHTML = html;
 }
 async function getPromoById(id){
+    // 🛡️ Evita un .eq('id', null/undefined) que PostgREST traduce como el texto
+    // "null" y Postgres rechaza en columnas bigint.
+    if (id === null || id === undefined || id === '') return null;
     const { data } = await supabase.from('promociones').select('*').eq('id', id).single();
     return data;
 }
@@ -3645,7 +3846,9 @@ if (addOrderBtn) {
                 localidad_id, 
                 dni, 
                 productos: productosPayload, 
-                total 
+                total, 
+                pagos: [], 
+                saldo_pendiente: total 
             }]);
 
             if (error) throw error;
@@ -3959,6 +4162,10 @@ async function fetchOrders() {
 
       // Tarjetas
       for (const p of pedidosDeLocalidad) {
+    // Localidad real de ESTE pedido (independiente del titulo del grupo,
+    // que durante una busqueda por nombre es "Resultados de Busqueda")
+    const localidadPedido = p.localidad_id ? (localidadMap[p.localidad_id] || "Sin Localidad") : "Sin Localidad";
+
         const div = document.createElement("div");
         Object.assign(div.style, {
           display: "flex",
@@ -4033,7 +4240,7 @@ infoDiv.innerHTML = `
         <strong style="font-size: 1.1em;">${safeText(p.cliente)}</strong>
         <span style="color: #7f8c8d; font-size: 0.85em;">(${fechaPedido})</span>
     </div>
-    <div style="color:#888; margin-bottom:2px; font-size: 0.9em;">Localidad: ${safeText(localidad)}</div>
+    <div style="color:#888; margin-bottom:2px; font-size: 0.9em;">Localidad: ${safeText(localidadPedido)}</div>
     ${prodHTML}
     <div style="margin-top:8px;font-weight:bold;">Total: <span style="color:#ff4d4f;">$${montoTotal.toLocaleString()}</span></div>
     ${pagosHTML}
@@ -4061,7 +4268,7 @@ infoDiv.innerHTML = `
           fontWeight: "bold",
           cursor: "pointer",
         });
-        pdfBtn.onclick = () => exportPedidoPDF({ ...p, localidad_nombre: localidad });
+        pdfBtn.onclick = () => exportPedidoPDF({ ...p, localidad_nombre: localidadPedido });
 
         const editBtn = document.createElement("button");
         editBtn.textContent = "✏️ Editar";
@@ -4077,19 +4284,32 @@ infoDiv.innerHTML = `
         });
         editBtn.onclick = () => editOrderModal(p);
 
-        const deleteBtn = document.createElement("button");
-        deleteBtn.textContent = "🗑️ Eliminar";
-        Object.assign(deleteBtn.style, {
-          background: "#3498db",
-          color: "#fff",
-          border: "none",
-          width: "200px",         // ancho fijo
-  	  height: "40px",         // altura opcional
-          borderRadius: "7px",
-          fontWeight: "bold",
-          cursor: "pointer",
-        });
-        deleteBtn.onclick = () => deleteOrder(p.id);
+        const deleteZoneDiv = document.createElement("div");
+        Object.assign(deleteZoneDiv.style, {
+          width: "200px",
+          marginTop: "14px",
+          paddingTop: "10px",
+          borderTop: "1px dashed #ccc",
+          textAlign: "center",
+        });
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.textContent = "Eliminar pedido";
+        Object.assign(deleteBtn.style, {
+          background: "transparent",
+          color: "#b0b0b0",
+          border: "1px solid #ddd",
+          width: "170px",
+          height: "26px",
+          borderRadius: "5px",
+          fontWeight: "normal",
+          fontSize: "0.75em",
+          cursor: "pointer",
+          opacity: "0.7",
+        });
+        deleteBtn.onmouseover = () => { deleteBtn.style.color = "#e74c3c"; deleteBtn.style.borderColor = "#e74c3c"; deleteBtn.style.opacity = "1"; };
+        deleteBtn.onmouseout = () => { deleteBtn.style.color = "#b0b0b0"; deleteBtn.style.borderColor = "#ddd"; deleteBtn.style.opacity = "0.7"; };
+        deleteBtn.onclick = () => confirmarEliminarPedido(p)
 
        // 💰 Botón Medios de Pago (CORREGIDO)
 const pagoBtn = document.createElement("button");
@@ -4196,15 +4416,16 @@ pagoBtn.onclick = () => {
         archiveIndividualBtn.onclick = () => archiveIndividualOrder(p.id);
 
 
-        actionsDiv.append(
+        deleteZoneDiv.appendChild(deleteBtn);
+        actionsDiv.append(
     pdfBtn,
     editBtn,
-    deleteBtn,
     pagoBtn,
     estadoBtn,
     preparadoBtn, // 👈 ESTE ES EL NUEVO
     archiveIndividualBtn
 );
+        actionsDiv.appendChild(deleteZoneDiv);
         div.append(infoDiv, actionsDiv);
         container.appendChild(div);
       }
@@ -4215,6 +4436,9 @@ pagoBtn.onclick = () => {
         // Restaurar scroll usando la posición guardada
         scrollTarget.scrollTop = lastOrdersScrollPosition;
     }, 0); 
+
+    // Actualizar el resumen de pedidos activos por localidad
+    renderResumenLocalidadesPedidos();
 
   } catch (err) {
     console.error(err);
@@ -5699,7 +5923,14 @@ setTimeout(() => {
                 (!cat || p.categoria_id == cat) &&
                 (p.nombre.toLowerCase().includes(filtro.toLowerCase()))
             );
-            lista.innerHTML = filtrados.map(p => `
+
+            // 🛡️ Los productos sin ID asignado en Supabase no se pueden agregar a un
+            // pedido: no hay forma de descontarles stock ni de referenciarlos después
+            // (un intento de hacerlo termina en "invalid input syntax for type bigint: null").
+            const sinId = filtrados.filter(p => p.id === null || p.id === undefined || p.id === '');
+            const conId = filtrados.filter(p => !(p.id === null || p.id === undefined || p.id === ''));
+
+            let html = conId.map(p => `
                 <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding:10px 0;">
                     <div style="display:flex; flex-direction:column;">
                         <span style="font-weight:600; font-size:14px;">${safeText(p.nombre)}</span>
@@ -5708,6 +5939,19 @@ setTimeout(() => {
                     <button class="addProdBtn" data-id="${p.id}" style="background:#2ecc71; color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:12px; font-weight:bold;">+ Add</button>
                 </div>
             `).join('');
+
+            if (sinId.length > 0) {
+                html += sinId.map(p => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px dashed #e67e22; padding:10px 0; opacity:0.75;">
+                        <div style="display:flex; flex-direction:column;">
+                            <span style="font-weight:600; font-size:14px;">${safeText(p.nombre)}</span>
+                            <span style="font-size:12px; color:#e67e22;">⚠️ Sin ID en Supabase — no se puede agregar</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            lista.innerHTML = html;
 
             document.querySelectorAll('.addProdBtn').forEach(btn => {
                 btn.onclick = () => {
@@ -5730,7 +5974,12 @@ setTimeout(() => {
 
     window.saveEditPedido = async function(id, nuevosProductos, dni) {
         const cliente = document.getElementById('editPedidoCliente').value.trim();
-        const localidad_id = document.getElementById('editPedidoLocalidad').value;
+        const localidadRaw = document.getElementById('editPedidoLocalidad').value;
+        // 🛡️ Nunca enviamos "" (vacío) ni "null" (texto) a una columna bigint:
+        // si no hay una localidad numérica válida seleccionada, mandamos NULL real.
+        const localidad_id = (localidadRaw && localidadRaw !== 'null' && !isNaN(parseInt(localidadRaw, 10)))
+            ? parseInt(localidadRaw, 10)
+            : null;
 
         const { data: pedidoOriginal } = await supabase.from('pedidos').select('*').eq('id', id).single();
         const productosOriginal = pedidoOriginal.productos || [];
@@ -5741,11 +5990,24 @@ setTimeout(() => {
         const allIds = new Set([...productosOriginal.map(p => p.id), ...nuevosProductos.map(p => p.id)]);
 
         for (const prodId of allIds) {
+            // 🛡️ Protección: si el producto no tiene un ID válido (null/undefined) o es un
+            // registro especial como "VISITA_999" (visita sin venta), no intentamos tocar su
+            // stock en Supabase: un .eq('id', null) termina enviándose como el texto "null" y
+            // Postgres lo rechaza porque la columna es bigint (invalid input syntax for type bigint: "null").
+            if (prodId === null || prodId === undefined || prodId === '' || prodId === 'VISITA_999') {
+                console.warn('Producto sin ID válido: se omite el ajuste de stock para este ítem.', prodId);
+                continue;
+            }
+
             const cantOriginal = mapOriginal[prodId] || 0;
             const cantNueva = mapNuevo[prodId] || 0;
             const dif = cantNueva - cantOriginal;
             if (dif !== 0) {
-                const { data: promo } = await supabase.from('promociones').select('*').eq('id', prodId).single();
+                const { data: promo, error: promoError } = await supabase.from('promociones').select('*').eq('id', prodId).single();
+                if (promoError || !promo) {
+                    console.warn('No se encontró la promoción para ajustar stock:', prodId, promoError);
+                    continue;
+                }
                 await supabase.from('promociones').update({ stock: (promo.stock || 0) - dif }).eq('id', prodId);
             }
         }
@@ -5775,9 +6037,108 @@ setTimeout(() => {
     renderModal();
 }
 
+/* ========== CONFIRMACIÓN REFORZADA PARA ELIMINAR PEDIDO ========== */
+/**
+ * Muestra un cartel de confirmación grande y llamativo, en DOS pasos,
+ * antes de permitir la eliminación de un pedido. Pensado para reducir
+ * al mínimo los borrados accidentales en el uso diario "en el campo".
+ */
+function confirmarEliminarPedido(p) {
+    // Elimina cualquier modal de confirmación previo que haya quedado abierto
+    const previo = document.getElementById('modalConfirmEliminarPedido');
+    if (previo) previo.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'modalConfirmEliminarPedido';
+    Object.assign(overlay.style, {
+        position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+        background: 'rgba(0,0,0,0.65)', zIndex: '20000',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+    });
+
+    const box = document.createElement('div');
+    Object.assign(box.style, {
+        background: '#fff', borderRadius: '14px', padding: '28px',
+        width: '92%', maxWidth: '420px', textAlign: 'center',
+        border: '4px solid #e74c3c', boxShadow: '0 10px 40px rgba(0,0,0,0.35)',
+    });
+
+    box.innerHTML = `
+        <div style="font-size:46px; line-height:1;">⚠️</div>
+        <h2 style="color:#e74c3c; margin:10px 0 8px 0;">¿Eliminar este pedido?</h2>
+        <p style="color:#333; font-size:1.05em; margin-bottom:4px;">
+            Cliente: <b>${safeText(p.cliente || 'Sin nombre')}</b>
+        </p>
+        <p style="color:#555; font-size:0.95em; margin-bottom:18px;">
+            Esta acción borra el pedido de forma permanente y no se puede deshacer.
+        </p>
+        <div style="display:flex; gap:10px; justify-content:center;">
+            <button id="btnCancelarElim1" style="flex:1; padding:12px; border:none; border-radius:8px; background:#ecf0f1; color:#2c3e50; font-weight:bold; cursor:pointer;">Cancelar</button>
+            <button id="btnContinuarElim1" style="flex:1; padding:12px; border:none; border-radius:8px; background:#e74c3c; color:#fff; font-weight:bold; cursor:pointer;">Sí, continuar</button>
+        </div>
+    `;
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    const cerrar = () => overlay.remove();
+
+    box.querySelector('#btnCancelarElim1').onclick = cerrar;
+    overlay.onclick = (e) => { if (e.target === overlay) cerrar(); };
+
+    box.querySelector('#btnContinuarElim1').onclick = () => {
+        cerrar();
+        confirmarEliminarPedidoPaso2(p);
+    };
+}
+
+function confirmarEliminarPedidoPaso2(p) {
+    const overlay = document.createElement('div');
+    overlay.id = 'modalConfirmEliminarPedidoPaso2';
+    Object.assign(overlay.style, {
+        position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+        background: 'rgba(0,0,0,0.75)', zIndex: '20001',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+    });
+
+    const box = document.createElement('div');
+    Object.assign(box.style, {
+        background: '#fff5f5', borderRadius: '14px', padding: '28px',
+        width: '92%', maxWidth: '420px', textAlign: 'center',
+        border: '4px solid #c0392b', boxShadow: '0 10px 50px rgba(0,0,0,0.5)',
+        animation: 'none',
+    });
+
+    box.innerHTML = `
+        <div style="font-size:52px; line-height:1;">🛑</div>
+        <h2 style="color:#c0392b; margin:10px 0 8px 0; text-transform:uppercase;">Última confirmación</h2>
+        <p style="color:#333; font-size:1em; margin-bottom:18px;">
+            Vas a eliminar <b>definitivamente</b> el pedido de <b>${safeText(p.cliente || 'Sin nombre')}</b>.<br>
+            No hay forma de recuperarlo después.
+        </p>
+        <div style="display:flex; gap:10px; justify-content:center;">
+            <button id="btnCancelarElim2" style="flex:1; padding:12px; border:none; border-radius:8px; background:#ecf0f1; color:#2c3e50; font-weight:bold; cursor:pointer;">No, cancelar</button>
+            <button id="btnConfirmarElim2" style="flex:1; padding:12px; border:none; border-radius:8px; background:#c0392b; color:#fff; font-weight:bold; cursor:pointer;">Eliminar definitivamente</button>
+        </div>
+    `;
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    const cerrar = () => overlay.remove();
+
+    box.querySelector('#btnCancelarElim2').onclick = cerrar;
+    overlay.onclick = (e) => { if (e.target === overlay) cerrar(); };
+
+    box.querySelector('#btnConfirmarElim2').onclick = async () => {
+        cerrar();
+        await deleteOrder(p.id);
+    };
+}
+
 /* ========== ELIMINAR PEDIDO (CORREGIDO) ========== */
 async function deleteOrder(id) {
-    if (!confirm('¿Eliminar pedido?')) return;
+    // La confirmación ahora se realiza antes, en confirmarEliminarPedido() (dos pasos).
 
     // Obtener los datos del pedido antes de borrarlo
     const { data } = await supabase.from('pedidos').select('*').eq('id', id).single();
@@ -5790,6 +6151,12 @@ async function deleteOrder(id) {
             if (pr.id === "VISITA_999") {
                 console.log("Registro de visita detectado: omitiendo restauración de stock.");
                 continue; // Salta a la siguiente iteración del for
+            }
+            // 🛡️ Si el producto no tiene un ID válido (null/undefined), tampoco
+            // intentamos restaurar su stock: evita "invalid input syntax for type bigint: null".
+            if (pr.id === null || pr.id === undefined || pr.id === '') {
+                console.warn("Producto sin ID válido en el pedido: se omite la restauración de stock.", pr);
+                continue;
             }
             // ------------------------
 
@@ -6341,6 +6708,61 @@ function escapeHtml(str) {
 
 // ================= LOCALIDADES =================
 
+/**
+ * Muestra, en formato de "chips", la cantidad de pedidos ACTIVOS (no archivados)
+ * que hay cargados en cada localidad. Si una localidad no tiene pedidos activos,
+ * directamente no aparece en el resumen. Al archivar/eliminar un pedido, la
+ * localidad se recalcula y desaparece de la lista apenas llega a 0.
+ */
+async function renderResumenLocalidadesPedidos() {
+    const cont = document.getElementById("resumenLocalidadesPedidos");
+    if (!cont) return;
+
+    try {
+        const [{ data: pedidosActivos, error: errPedidos }, { data: localidadesData, error: errLoc }] = await Promise.all([
+            supabase.from("pedidos").select("localidad_id").eq("archivado", false),
+            supabase.from("localidades").select("id, nombre")
+        ]);
+
+        if (errPedidos) throw errPedidos;
+        if (errLoc) throw errLoc;
+
+        const localidadMap = {};
+        (localidadesData || []).forEach(l => (localidadMap[l.id] = l.nombre));
+
+        // Contar pedidos activos por localidad
+        const conteos = {};
+        (pedidosActivos || []).forEach(p => {
+            const key = p.localidad_id || "sin_localidad";
+            conteos[key] = (conteos[key] || 0) + 1;
+        });
+
+        const entradas = Object.entries(conteos)
+            .map(([key, cantidad]) => ({
+                nombre: key === "sin_localidad" ? "Sin Localidad" : (localidadMap[key] || "Localidad desconocida"),
+                cantidad
+            }))
+            .filter(e => e.cantidad > 0)
+            .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
+
+        if (entradas.length === 0) {
+            cont.innerHTML = "";
+            return;
+        }
+
+        cont.innerHTML = entradas.map(e => `
+            <div style="display:flex; align-items:center; gap:8px; background:#eaf4ff; border:1px solid #b8ddff; color:#1c5d99; padding:8px 14px; border-radius:20px; font-weight:bold; font-size:0.9em;">
+                📍 ${safeText(e.nombre)}
+                <span style="background:#3498db; color:#fff; border-radius:12px; padding:2px 9px; font-size:0.9em;">${e.cantidad}</span>
+            </div>
+        `).join("");
+
+    } catch (err) {
+        console.error("Error al calcular resumen de pedidos por localidad:", err);
+        cont.innerHTML = "";
+    }
+}
+
 async function poblarSelectLocalidadesPedidos() {
     const sel = document.getElementById("pedidoLocalidadFilter");
     if (!sel) return;
@@ -6545,11 +6967,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   
     fetchLocalidades();
     fetchPromos();
+    actualizarContadorPromosTotal();
     // NO llamar fetchOrders() al inicio — se carga solo cuando se elige localidad
     fetchDocumentos();
     loadPromoSubMenu();
     setupArchiveFilters();
     poblarSelectLocalidadesPedidos();
+    renderResumenLocalidadesPedidos();
 
 
 
@@ -6891,26 +7315,58 @@ async function handleQuickSearch(term) {
 
     searchTimer = setTimeout(async () => {
         try {
-            // 2. Si el cache está vacío, descargamos una vez. Si no, usamos el cache.
+            // 2. Si el cache está vacío, descargamos TODO el catálogo una vez (sin límite
+            //    artificial de cantidad), paginando de a 1000 filas hasta traer todo.
             if (promosCache.length === 0) {
-                const { data, error } = await supabase
-                    .from('promociones')
-                    .select('id, nombre, precio, precio_anterior, stock') // Seleccionamos solo lo necesario
-                    .limit(500); // Traemos una cantidad razonable para tener en memoria
+                let allRows = [];
+                let from = 0;
+                const pageSize = 1000;
+                while (true) {
+                    const { data, error } = await supabase
+                        .from('promociones')
+                        .select('id, nombre, precio, precio_anterior, stock')
+                        .range(from, from + pageSize - 1);
 
-                if (error) throw error;
-                promosCache = data || [];
+                    if (error) throw error;
+                    allRows = allRows.concat(data || []);
+                    if (!data || data.length < pageSize) break;
+                    from += pageSize;
+                }
+                promosCache = allRows;
             }
 
-            // 3. Filtramos localmente (0 consultas a Supabase en este punto)
-            const filteredData = promosCache.filter(p => 
-                p.nombre.toLowerCase().includes(term.toLowerCase())
-            ).slice(0, 10);
+            // 3. Filtramos localmente por nombre, SIN límite de cantidad de resultados:
+            //    se muestran todos los productos cuyo nombre contenga el texto buscado.
+            const termLower = term.toLowerCase();
+            const filteredData = promosCache.filter(p =>
+                (p.nombre || '').toLowerCase().includes(termLower)
+            );
 
             resultsWrapper.style.display = 'block';
 
             if (filteredData.length > 0) {
-                listContainer.innerHTML = filteredData.map(p => `
+                listContainer.innerHTML = filteredData.map((p, idx) => {
+                    // ⚠️ Si el producto no tiene un ID asignado en Supabase, no se puede
+                    // editar de forma segura (no hay forma de apuntar el UPDATE a ese
+                    // registro). Se muestra igualmente, pero con una advertencia clara
+                    // y sin la posibilidad de guardar cambios hasta que tenga un ID.
+                    if (p.id === null || p.id === undefined || p.id === '') {
+                        return `
+                            <div class="quick-card" style="border:2px dashed #e67e22; background:#fff8f0;">
+                                <div style="display:flex; align-items:center; gap:8px; color:#e67e22; font-weight:bold; margin-bottom:6px;">
+                                    ⚠️ Sin ID asignado en Supabase
+                                </div>
+                                <div style="font-size:0.95em; color:#333;">
+                                    <b>${safeText(p.nombre || '(sin nombre)')}</b> — Precio: $${p.precio ?? 'N/A'} — Stock: ${p.stock ?? 'N/A'}
+                                </div>
+                                <div style="font-size:0.85em; color:#888; margin-top:6px;">
+                                    Este producto no puede editarse desde aquí hasta que tenga un ID válido en la base de datos.
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    return `
                     <div class="quick-card">
                         <div class="quick-grid-top">
                             <div class="quick-field">
@@ -6938,7 +7394,8 @@ async function handleQuickSearch(term) {
                             </div>
                         </div>
                     </div>
-                `).join('');
+                `;
+                }).join('');
             } else {
                 listContainer.innerHTML = "<p class='quick-no-results'>No se encontraron productos.</p>";
             }
@@ -6979,6 +7436,9 @@ async function saveQuickEdit(id) {
 
         const { error } = await supabase.from('promociones').update(datos).eq('id', id);
         if (error) throw error;
+
+        // Invalidamos el cache local de búsqueda rápida para que refleje los cambios
+        promosCache = [];
 
         // Feedback visual en el botón
         const originalText = btn.innerHTML;
@@ -7401,6 +7861,7 @@ async function applyBulkUpdate() {
 
         await Promise.all(updates);
         showToast("✅ Actualización masiva completada");
+        promosCache = []; // Invalida el cache de búsqueda rápida
         fetchPromos();
     } catch (err) {
         console.error(err);

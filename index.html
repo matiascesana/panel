@@ -931,6 +931,7 @@ button[onclick*="delete"] {
     <li><button class="tab-btn" data-tab="pedidosArchivados">Pedidos Archivados</button></li>
     <li><button class="tab-btn" data-tab="ctaCte">Cuenta Corriente</button></li>
     <li><button class="tab-btn" data-tab="reporteVentas">Reporte de Ventas</button></li>
+    <li><button class="tab-btn" data-tab="compras">Compras</button></li>
     <li><button class="tab-btn" data-tab="categorias">Categorías</button></li>
     <li><button class="tab-btn" data-tab="localidades">Localidades</button></li>
     <li><button class="tab-btn" data-tab="admin">Ingresos y Gastos</button></li>
@@ -1154,16 +1155,53 @@ button[onclick*="delete"] {
 
 <section id="reporteVentas" class="section">
     <h2>📈 Reporte de Ventas por Producto</h2>
-    <p style="color:#555;">Muestra la cantidad total vendida de cada producto a través de los pedidos activos. Use esta información para planificar sus pedidos de reposición de stock.</p>
-    
-    <div style="margin-bottom: 15px; text-align: right;">
+    <p style="color:#555;">Muestra la cantidad vendida de cada producto según el rango de fechas de pedido elegido (incluye pedidos activos y archivados). Use esta información para armar sus pedidos a proveedores. Solo lo que se muestra en la tabla se exporta al PDF.</p>
+
+    <div style="margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 8px; border: 1px solid #ddd; display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+        <div style="min-width:150px;">
+            <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">📅 Desde:</label>
+            <input type="date" id="ventasDesde" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc;">
+        </div>
+        <div style="min-width:150px;">
+            <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">📅 Hasta:</label>
+            <input type="date" id="ventasHasta" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc;">
+        </div>
+        <div style="min-width:180px;">
+            <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">🏷️ Categoría:</label>
+            <select id="ventasCategoriaFilter" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc;" onchange="applyReportFilters()">
+                <option value="">Todas las categorías</option>
+            </select>
+        </div>
+        <div style="flex:1; min-width:200px;">
+            <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">🔍 Artículo:</label>
+            <input type="text" id="ventasArticuloFilter" placeholder="Buscar por nombre de producto..." oninput="applyReportFilters()" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
+        </div>
+        <button onclick="fetchSalesData()" style="padding: 10px 18px; border: none; border-radius: 6px; background: var(--primary); color: white; cursor: pointer; font-weight: bold; height:38px;">
+            🔄 Generar Reporte
+        </button>
         <button onclick="exportSalesPDF()" 
-                style="padding: 8px 15px; border: none; border-radius: 6px; background: #c0392b; color: white; cursor: pointer; font-weight: bold;">
+                style="padding: 10px 18px; border: none; border-radius: 6px; background: #c0392b; color: white; cursor: pointer; font-weight: bold; height:38px;">
             ⬇️ Exportar PDF
         </button>
     </div>
+
     <div id="salesReportContainer" style="margin-top:20px;">
-        <p>Cargando datos de ventas...</p>
+        <p>Elija un rango de fechas y presione "Generar Reporte".</p>
+    </div>
+</section>
+
+<section id="compras" class="section">
+    <h2>🧾 Compras a Proveedores</h2>
+    <p style="color:#555;">Cargue aquí las facturas de compra. El stock de los productos existentes se suma automáticamente. Si el producto es nuevo, se crea con su categoría, precio de venta e imagen.</p>
+
+    <div style="margin-bottom:15px;">
+        <button onclick="abrirModalCompra()" style="background:var(--primary); color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; font-weight:bold;">
+            ➕ Nueva Factura de Compra
+        </button>
+    </div>
+
+    <div id="comprasListContainer" style="margin-top:20px;">
+        <p>Cargando facturas de compra...</p>
     </div>
 </section>
 
@@ -2483,7 +2521,10 @@ function activateSection(tab) {
             if (typeof cargarTiendaCliente === 'function') cargarTiendaCliente();
             break;
         case 'reporteVentas':
-            if (typeof fetchSalesData === 'function') fetchSalesData();
+            if (typeof initReporteVentasSection === 'function') initReporteVentasSection();
+            break;
+        case 'compras':
+            if (typeof initComprasSection === 'function') initComprasSection();
             break;
 case 'ctaCte':
     break;
@@ -6547,6 +6588,7 @@ async function guardarNuevaCategoria(nombre) {
         if (error) throw error;
 
         alert("✅ Categoría agregada correctamente");
+        allCategories = []; // invalida el caché usado en Reporte de Ventas / Compras
         fetchCategorias(); // vuelve a cargar la lista de categorías (si existe)
     } catch (err) {
         alert("Error al agregar categoría: " + err.message);
@@ -6634,6 +6676,7 @@ async function deleteCategoria(id) {
         if (error) throw error;
 
         alert("✅ Categoría eliminada correctamente");
+        allCategories = []; // invalida el caché usado en Reporte de Ventas / Compras
         fetchCategorias();
     } catch (err) {
         alert("Error al eliminar categoría: " + err.message);
@@ -6672,6 +6715,7 @@ async function updateCategoria(id) {
         if (error) throw error;
 
         alert("✅ Categoría actualizada correctamente.");
+        allCategories = []; // invalida el caché usado en Reporte de Ventas / Compras
         fetchCategorias(); 
 
     } catch (err) {
@@ -7046,41 +7090,103 @@ async function fetchAllPromos() {
 
 
 /**
- * Obtiene los datos de ventas DE PEDIDOS ACTIVOS, los agrupa por categoría y los muestra.
+ * Se ejecuta al entrar a la pestaña "Reporte de Ventas".
+ * Solo prepara el selector de categorías (usando caché); NO consulta pedidos
+ * ni promociones todavía, para no recargar esa consulta cada vez que se
+ * entra a la sección. Los datos reales se piden recién cuando el usuario
+ * elige un filtro y presiona "Generar Reporte".
+ */
+async function initReporteVentasSection() {
+    await fetchAllCategories(); // usa caché si ya estaban cargadas
+    fillVentasCategoriaFilter();
+
+    // Si todavía no se generó ningún reporte en esta sesión, solo mostramos el mensaje guía
+    if (!window.allSalesReportData) {
+        const container = document.getElementById('salesReportContainer');
+        if (container) container.innerHTML = '<p>Elija al menos un filtro (fecha, categoría o artículo) y presione "Generar Reporte".</p>';
+    }
+}
+
+/**
+ * Llena el select de categorías del reporte de ventas (una sola vez).
+ */
+function fillVentasCategoriaFilter() {
+    const select = document.getElementById('ventasCategoriaFilter');
+    if (!select) return;
+    if (select.options.length > 1) return; // ya cargado
+    allCategories.forEach(cat => {
+        const opt = document.createElement('option');
+        opt.value = cat.id;
+        opt.textContent = cat.nombre;
+        select.appendChild(opt);
+    });
+}
+
+/**
+ * Obtiene los datos de ventas de TODOS los pedidos (activos y archivados) dentro
+ * del rango de fechas de pedido seleccionado, los agrupa por producto/categoría.
+ * NO depende de si el pedido está activo o archivado: filtra por fecha.
+ *
+ * ⚠️ No consulta Supabase si no hay NINGÚN filtro seleccionado (fecha, categoría
+ * o artículo), para evitar traer todas las ventas históricas sin necesidad.
  */
 async function fetchSalesData() {
     const container = document.getElementById('salesReportContainer');
+
+    // 0. Verificar que haya al menos un filtro cargado antes de consultar Supabase
+    const desde = document.getElementById('ventasDesde')?.value || '';
+    const hasta = document.getElementById('ventasHasta')?.value || '';
+    const categoriaIdPrevia = document.getElementById('ventasCategoriaFilter')?.value || '';
+    const articuloPrevio = (document.getElementById('ventasArticuloFilter')?.value || '').trim();
+
+    if (!desde && !hasta && !categoriaIdPrevia && !articuloPrevio) {
+        window.allSalesReportData = [];
+        window.currentReportData = [];
+        container.innerHTML = '<p style="color:#e67e22;">⚠️ Elija al menos un filtro (fecha, categoría o artículo) antes de generar el reporte.</p>';
+        return;
+    }
+
     container.innerHTML = '<p>Obteniendo datos de pedidos...</p>';
 
-    // 1. Cargar todas las promociones (incluyendo la categoría)
+    // 1. Cargar todas las promociones y categorías (incluyendo la categoría)
     await fetchAllPromos();
-    
-    // 2. Obtener SOLO los pedidos activos
-    const { data: orders, error: ordersError } = await supabase
-        .from('pedidos')
-        .select('productos') 
-        .eq('archivado', false); 
+    fillVentasCategoriaFilter();
+
+    // 2. Armar rango de fechas (filtra por fecha de pedido, no por estado activo/archivado)
+    let query = supabase.from('pedidos').select('productos, created_at');
+
+    if (desde) {
+        query = query.gte('created_at', new Date(desde + 'T00:00:00').toISOString());
+    }
+    if (hasta) {
+        const hastaFin = new Date(hasta + 'T00:00:00');
+        hastaFin.setDate(hastaFin.getDate() + 1); // incluye todo el día "hasta"
+        query = query.lt('created_at', hastaFin.toISOString());
+    }
+
+    const { data: orders, error: ordersError } = await query;
 
     if (ordersError) {
         console.error('Error al obtener pedidos para el reporte:', ordersError);
         container.innerHTML = `<p style="color:#ff4d4f;">Error al cargar los pedidos: ${ordersError.message}</p>`;
         return;
     }
-    
+
     if (!orders || orders.length === 0) {
-        container.innerHTML = '<p>No se encontraron pedidos activos.</p>';
+        window.allSalesReportData = [];
+        container.innerHTML = '<p>No se encontraron pedidos en el rango de fechas seleccionado.</p>';
         return;
     }
 
     // 3. Agregar las ventas por producto
-    const salesMap = new Map(); 
-    
+    const salesMap = new Map();
+
     orders.forEach(order => {
         if (order.productos && Array.isArray(order.productos)) {
             order.productos.forEach(product => {
                 const prodId = product.id;
-                const qty = parseInt(product.cantidad, 10) || 0; 
-                
+                const qty = parseInt(product.cantidad, 10) || 0;
+
                 if (prodId && qty > 0) {
                     const currentTotal = salesMap.get(prodId) || 0;
                     salesMap.set(prodId, currentTotal + qty);
@@ -7089,43 +7195,71 @@ async function fetchSalesData() {
         }
     });
 
-    // 4. Mapear los datos de ventas con nombre, stock y CATEGORÍA
+    // 4. Mapear los datos de ventas con nombre, stock, categoría e ID (para filtrar luego)
     const reportData = [];
     salesMap.forEach((totalSold, prodId) => {
         const promo = allPromos.find(p => p.id === prodId);
         const stockActual = promo ? (promo.stock ?? 0) : 'N/A';
-        
+
         reportData.push({
+            id: prodId,
             nombre: promo ? promo.nombre : `ID Desconocido (${prodId})`,
             stock: stockActual,
             vendido: totalSold,
-            // NUEVO: Añadir categoría para la agrupación
-            categoria: promo ? promo.categoria_nombre : 'Sin Categoría', 
+            categoria: promo ? promo.categoria_nombre : 'Sin Categoría',
+            categoriaId: promo ? (promo.categoria_id ?? '') : '',
         });
     });
-    
+
     // 5. ORDENAR: Primero por Categoría (A-Z), luego por Nombre (A-Z)
     reportData.sort((a, b) => {
         const catA = a.categoria.toUpperCase();
         const catB = b.categoria.toUpperCase();
-        
+
         if (catA < catB) return -1;
         if (catA > catB) return 1;
-        
-        // Si las categorías son iguales, ordena por nombre del producto
+
         const nameA = a.nombre.toUpperCase();
         const nameB = b.nombre.toUpperCase();
-        
+
         if (nameA < nameB) return -1;
         if (nameA > nameB) return 1;
         return 0;
     });
-    
-    // **Almacenar datos en global para la exportación a PDF**
-    window.currentReportData = reportData; 
 
-    // 6. Renderizar la tabla
-    renderSalesReportTable(container, reportData);
+    // Guardamos el set completo (sin filtrar por categoría/artículo) para poder
+    // re-filtrar en el cliente sin volver a pedir datos a Supabase.
+    window.allSalesReportData = reportData;
+
+    // 6. Aplicar filtros de categoría/artículo (si hay alguno cargado) y renderizar
+    applyReportFilters();
+}
+
+/**
+ * Filtra window.allSalesReportData por categoría y/o texto de artículo,
+ * guarda el resultado en window.currentReportData (lo único que se exporta a PDF)
+ * y renderiza la tabla.
+ */
+function applyReportFilters() {
+    const container = document.getElementById('salesReportContainer');
+    if (!container) return;
+
+    const data = window.allSalesReportData || [];
+    const categoriaId = document.getElementById('ventasCategoriaFilter')?.value || '';
+    const articulo = (document.getElementById('ventasArticuloFilter')?.value || '').trim().toLowerCase();
+
+    let filtered = data;
+    if (categoriaId) {
+        filtered = filtered.filter(item => String(item.categoriaId) === String(categoriaId));
+    }
+    if (articulo) {
+        filtered = filtered.filter(item => item.nombre.toLowerCase().includes(articulo));
+    }
+
+    // **Almacenar SOLO lo mostrado en global para la exportación a PDF**
+    window.currentReportData = filtered;
+
+    renderSalesReportTable(container, filtered);
 }
 
 
@@ -7135,8 +7269,10 @@ async function fetchSalesData() {
 
 /**
  * Obtiene todas las categorías para mapear IDs a nombres.
+ * Usa caché: si ya se cargaron antes, no vuelve a consultar Supabase.
  */
-async function fetchAllCategories() {
+async function fetchAllCategories(forzar = false) {
+    if (!forzar && allCategories.length > 0) return; // ya cargadas, evita reconsultar
     console.log('Cargando todas las categorías...');
     const { data, error } = await supabase.from('categorias').select('id, nombre'); 
     if (error) {
@@ -7233,10 +7369,16 @@ function exportSalesPDF() {
     const doc = new jsPDF('p', 'mm', 'a4');
     
     // Título y Fecha
+    const desdeVal = document.getElementById('ventasDesde')?.value;
+    const hastaVal = document.getElementById('ventasHasta')?.value;
+    const rangoTexto = (desdeVal || hastaVal)
+        ? `Pedidos del ${desdeVal || '—'} al ${hastaVal || '—'}`
+        : 'Todos los pedidos (sin filtro de fecha)';
+
     doc.setFontSize(18);
-    doc.text("Reporte de Ventas de Productos (Activos)", 14, 20);
+    doc.text("Reporte de Ventas de Productos", 14, 20);
     doc.setFontSize(10);
-    doc.text(`Fecha del Reporte: ${new Date().toLocaleDateString()}`, 14, 27);
+    doc.text(`Fecha del Reporte: ${new Date().toLocaleDateString()}  |  ${rangoTexto}`, 14, 27);
     
     // Preparar datos para AutoTable
     const finalData = [];
@@ -7845,12 +7987,20 @@ async function applyBulkUpdate() {
     if (!confirm(`¿Seguro que quieres actualizar el ${targetField} de esta categoría?`)) return;
 
     try {
+        // ⚠️ FIX: antes filtraba .is('categoria_id', null) e ignoraba la categoría
+        // elegida en el select, por eso la actualización masiva "no funcionaba"
+        // (actualizaba productos sin categoría en vez de los de la categoría seleccionada).
         const { data: productos, error } = await supabase
             .from('promociones')
             .select(`id, ${targetField}`)
-            .is('categoria_id', null);
+            .eq('categoria_id', categoryId);
 
         if (error) throw error;
+
+        if (!productos || productos.length === 0) {
+            alert("No se encontraron productos en esa categoría.");
+            return;
+        }
 
         const updates = productos.map(p => {
             let nuevoValor = type === 'porcentaje' ? p[targetField] * (1 + (value / 100)) : value;
@@ -8266,6 +8416,523 @@ async function savePrepChanges() {
 
 
 
+/* =========================================================
+   MÓDULO DE COMPRAS A PROVEEDORES
+   =========================================================
+   ⚠️ REQUIERE una tabla "compras" en Supabase con esta estructura
+   (ejecutar una sola vez en el SQL editor de Supabase si no existe):
+
+   create table compras (
+       id uuid primary key default gen_random_uuid(),
+       created_at timestamp with time zone default now(),
+       fecha date,
+       proveedor text,
+       numero_factura text,
+       items jsonb,
+       total numeric
+   );
+
+   Reglas de negocio implementadas:
+   - Producto EXISTENTE: la cantidad comprada SIEMPRE se suma al stock actual.
+     El precio de venta solo se actualiza si se carga manualmente un "Nuevo
+     precio de venta" distinto al actual; si se deja vacío, el producto
+     conserva el precio que ya tenía.
+   - Producto NUEVO: se crea en "promociones" con el precio de venta cargado
+     (obligatorio, porque no existe un precio previo), la categoría elegida
+     (o creada al vuelo) y el stock inicial = cantidad comprada. Puede
+     agregársele una imagen desde el modal, igual que al resto de productos.
+   ========================================================= */
+
+let comprasItemsActuales = [];      // Items cargados en la factura que se está armando
+let comprasNuevoItemImagenFile = null; // Imagen elegida (temporal) para el producto nuevo en curso
+
+async function initComprasSection() {
+    if (allCategories.length === 0) {
+        await fetchAllCategories();
+    }
+    fetchCompras();
+}
+
+/* ---------- Listado de facturas ya cargadas ---------- */
+
+async function fetchCompras() {
+    const container = document.getElementById('comprasListContainer');
+    if (!container) return;
+    container.innerHTML = '<p>Cargando facturas de compra...</p>';
+
+    const { data, error } = await supabase
+        .from('compras')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Error al cargar compras:', error);
+        container.innerHTML = `<p style="color:#ff4d4f;">No se pudo cargar el historial de compras. Verifique que exista la tabla "compras" en Supabase.<br><small>${error.message}</small></p>`;
+        return;
+    }
+
+    renderComprasList(data || []);
+}
+
+function renderComprasList(data) {
+    const container = document.getElementById('comprasListContainer');
+    if (!data || data.length === 0) {
+        container.innerHTML = '<p>Todavía no cargó ninguna factura de compra.</p>';
+        return;
+    }
+
+    container.innerHTML = data.map(compra => {
+        const items = Array.isArray(compra.items) ? compra.items : [];
+        const fecha = compra.fecha
+            ? new Date(compra.fecha + 'T00:00:00').toLocaleDateString('es-AR')
+            : (compra.created_at ? new Date(compra.created_at).toLocaleDateString('es-AR') : 'Sin fecha');
+
+        const itemsHtml = items.map(it => `
+            <li>${escapeHtml(it.nombre)} — ${it.esNuevo ? '🆕 ' : ''}x${it.cantidad}${it.costoUnitario ? ` — costo $${Number(it.costoUnitario).toLocaleString('es-AR')}` : ''}${it.nuevoPrecio ? ` — nuevo precio venta: $${Number(it.nuevoPrecio).toLocaleString('es-AR')}` : ''}</li>
+        `).join('');
+
+        return `
+            <div class="card" style="align-items:flex-start; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; width:100%; flex-wrap:wrap; gap:8px;">
+                    <div>
+                        <b>${escapeHtml(compra.proveedor || 'Proveedor sin nombre')}</b>
+                        ${compra.numero_factura ? ` — Factura N° ${escapeHtml(compra.numero_factura)}` : ''}
+                        <div class="card-stock">📅 ${fecha} · ${items.length} ítem(s)</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div class="card-price">$${Number(compra.total || 0).toLocaleString('es-AR')}</div>
+                        <button class="delete-btn" onclick="eliminarCompra('${compra.id}')">🗑️ Eliminar Registro</button>
+                    </div>
+                </div>
+                <ul style="margin:8px 0 0 0; padding-left:18px; font-size:0.9em; color:#555;">
+                    ${itemsHtml}
+                </ul>
+            </div>
+        `;
+    }).join('');
+}
+
+async function eliminarCompra(id) {
+    if (!confirm('¿Eliminar este registro de compra? Esto NO revierte el stock ni los precios ya actualizados, solo borra el registro histórico de la factura.')) return;
+    const { error } = await supabase.from('compras').delete().eq('id', id);
+    if (error) { alert('Error al eliminar: ' + error.message); return; }
+    showToast('🗑️ Registro de compra eliminado');
+    fetchCompras();
+}
+
+/* ---------- Modal: nueva factura de compra ---------- */
+
+function abrirModalCompra() {
+    comprasItemsActuales = [];
+    comprasNuevoItemImagenFile = null;
+
+    document.getElementById('compraFecha').value = new Date().toISOString().split('T')[0];
+    document.getElementById('compraProveedor').value = '';
+    document.getElementById('compraNumeroFactura').value = '';
+    document.getElementById('compraBuscarProducto').value = '';
+    document.getElementById('compraBuscarResultados').style.display = 'none';
+    document.getElementById('compraNuevoProductoForm').style.display = 'none';
+    resetFormNuevoProductoCompra();
+
+    cargarCategoriasSelectCompra();
+    renderCompraItemsList();
+
+    document.getElementById('modalCompra').style.display = 'flex';
+}
+
+function cerrarModalCompra() {
+    document.getElementById('modalCompra').style.display = 'none';
+}
+
+async function cargarCategoriasSelectCompra() {
+    if (allCategories.length === 0) {
+        await fetchAllCategories();
+    }
+    const select = document.getElementById('compraNuevoCategoria');
+    select.innerHTML = '<option value="">Seleccionar categoría...</option>' +
+        allCategories.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+}
+
+/* ---------- Buscar y agregar producto EXISTENTE ---------- */
+
+async function buscarProductoCompra(term) {
+    const resultsWrapper = document.getElementById('compraBuscarResultados');
+
+    if (!term || term.trim().length < 2) {
+        resultsWrapper.style.display = 'none';
+        resultsWrapper.innerHTML = '';
+        return;
+    }
+
+    // Reutiliza el mismo cache de productos que usa la búsqueda rápida de Promociones
+    if (promosCache.length === 0) {
+        let allRows = [];
+        let from = 0;
+        const pageSize = 1000;
+        while (true) {
+            const { data, error } = await supabase
+                .from('promociones')
+                .select('id, nombre, precio, precio_anterior, stock')
+                .range(from, from + pageSize - 1);
+            if (error) { console.error(error); break; }
+            allRows = allRows.concat(data || []);
+            if (!data || data.length < pageSize) break;
+            from += pageSize;
+        }
+        promosCache = allRows;
+    }
+
+    const termLower = term.trim().toLowerCase();
+    const filtrados = promosCache.filter(p => (p.nombre || '').toLowerCase().includes(termLower));
+
+    if (filtrados.length === 0) {
+        resultsWrapper.innerHTML = '<div style="padding:10px; color:#888;">Sin resultados. Puede cargarlo como producto nuevo.</div>';
+        resultsWrapper.style.display = 'block';
+        return;
+    }
+
+    resultsWrapper.innerHTML = filtrados.map(p => `
+        <div onclick='addProductoExistenteACompra(${JSON.stringify(String(p.id))})' 
+             style="padding:10px; cursor:pointer; border-bottom:1px solid #eee; display:flex; justify-content:space-between;">
+            <span>${escapeHtml(p.nombre)}</span>
+            <span style="color:#888; font-size:0.85em;">Stock: ${p.stock ?? 0} · $${p.precio ?? 0}</span>
+        </div>
+    `).join('');
+    resultsWrapper.style.display = 'block';
+}
+
+function addProductoExistenteACompra(id) {
+    const promo = promosCache.find(p => String(p.id) === String(id));
+    if (!promo) { alert('No se encontró el producto.'); return; }
+
+    // Evitar duplicar el mismo producto: si ya está, solo aumenta la cantidad
+    const existente = comprasItemsActuales.find(it => !it.esNuevo && String(it.id) === String(id));
+    if (existente) {
+        existente.cantidad = (Number(existente.cantidad) || 0) + 1;
+    } else {
+        comprasItemsActuales.push({
+            esNuevo: false,
+            id: promo.id,
+            nombre: promo.nombre,
+            stockActual: promo.stock ?? 0,
+            precioActual: promo.precio ?? 0,
+            cantidad: 1,
+            costoUnitario: 0,
+            nuevoPrecio: '' // vacío = mantiene el precio actual
+        });
+    }
+
+    document.getElementById('compraBuscarProducto').value = '';
+    document.getElementById('compraBuscarResultados').style.display = 'none';
+    renderCompraItemsList();
+}
+
+/* ---------- Alta de producto NUEVO dentro de la compra ---------- */
+
+function toggleNuevoProductoCompraForm() {
+    const form = document.getElementById('compraNuevoProductoForm');
+    form.style.display = (form.style.display === 'none' || !form.style.display) ? 'block' : 'none';
+}
+
+function resetFormNuevoProductoCompra() {
+    document.getElementById('compraNuevoNombre').value = '';
+    document.getElementById('compraNuevoPrecioVenta').value = '';
+    document.getElementById('compraNuevoCosto').value = '';
+    document.getElementById('compraNuevoCantidad').value = '1';
+    document.getElementById('compraNuevoImagenPreview').style.display = 'none';
+    document.getElementById('compraNuevoImagenPreview').src = '';
+    document.getElementById('compraNuevoImagenNombre').textContent = 'Sin imagen seleccionada';
+    comprasNuevoItemImagenFile = null;
+}
+
+async function crearCategoriaRapidaCompra() {
+    const nombre = prompt('Nombre de la nueva categoría:');
+    if (!nombre || !nombre.trim()) return;
+
+    try {
+        const { data, error } = await supabase
+            .from('categorias')
+            .insert([{ nombre: nombre.trim() }])
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        allCategories.push(data);
+        const select = document.getElementById('compraNuevoCategoria');
+        const opt = document.createElement('option');
+        opt.value = data.id;
+        opt.textContent = data.nombre;
+        select.appendChild(opt);
+        select.value = data.id;
+
+        showToast('✅ Categoría creada: ' + data.nombre);
+    } catch (err) {
+        alert('Error al crear la categoría: ' + err.message);
+    }
+}
+
+/* ---------- Sub-modal: imagen del producto nuevo ---------- */
+
+function abrirModalCompraImagen() {
+    document.getElementById('compraImagenInput').value = '';
+    document.getElementById('compraImagenModalPreview').style.display = 'none';
+    document.getElementById('modalCompraImagen').style.display = 'flex';
+}
+
+function cerrarModalCompraImagen() {
+    document.getElementById('modalCompraImagen').style.display = 'none';
+}
+
+function previsualizarImagenCompra(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const preview = document.getElementById('compraImagenModalPreview');
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = 'block';
+}
+
+function confirmarImagenCompra() {
+    const file = document.getElementById('compraImagenInput').files[0];
+    if (!file) { alert('Seleccione una imagen primero.'); return; }
+
+    comprasNuevoItemImagenFile = file;
+    document.getElementById('compraNuevoImagenPreview').src = URL.createObjectURL(file);
+    document.getElementById('compraNuevoImagenPreview').style.display = 'inline-block';
+    document.getElementById('compraNuevoImagenNombre').textContent = file.name;
+
+    cerrarModalCompraImagen();
+}
+
+function agregarNuevoProductoACompra() {
+    const nombre = document.getElementById('compraNuevoNombre').value.trim();
+    const categoriaId = document.getElementById('compraNuevoCategoria').value;
+    const precioVenta = parseFloat(document.getElementById('compraNuevoPrecioVenta').value);
+    const costoUnitario = parseFloat(document.getElementById('compraNuevoCosto').value) || 0;
+    const cantidad = parseInt(document.getElementById('compraNuevoCantidad').value) || 0;
+
+    if (!nombre) { alert('Ingrese el nombre del producto.'); return; }
+    if (!categoriaId) { alert('Seleccione (o cree) una categoría.'); return; }
+    if (isNaN(precioVenta) || precioVenta <= 0) { alert('Ingrese el precio de venta del producto nuevo (es obligatorio porque no tiene un precio previo).'); return; }
+    if (cantidad <= 0) { alert('Ingrese la cantidad comprada.'); return; }
+
+    comprasItemsActuales.push({
+        esNuevo: true,
+        nombre,
+        categoriaId,
+        precioVenta,
+        costoUnitario,
+        cantidad,
+        imagenFile: comprasNuevoItemImagenFile
+    });
+
+    resetFormNuevoProductoCompra();
+    document.getElementById('compraNuevoProductoForm').style.display = 'none';
+    renderCompraItemsList();
+}
+
+/* ---------- Lista de items de la factura en curso ---------- */
+
+function renderCompraItemsList() {
+    const container = document.getElementById('compraItemsList');
+
+    if (comprasItemsActuales.length === 0) {
+        container.innerHTML = '<p style="color:#999; font-style:italic;">Aún no agregó productos a esta factura.</p>';
+        document.getElementById('compraTotalFactura').textContent = '0';
+        return;
+    }
+
+    container.innerHTML = comprasItemsActuales.map((item, idx) => `
+        <div class="card" style="align-items:center;">
+            <div class="card-info">
+                <b>${escapeHtml(item.nombre)} ${item.esNuevo ? '<span style="color:#10b981; font-size:0.8em;">(NUEVO)</span>' : ''}</b>
+                ${!item.esNuevo ? `<span class="card-stock">Stock actual: ${item.stockActual} · Precio actual: $${item.precioActual}</span>` : ''}
+                <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:4px;">
+                    <label style="font-size:0.8em;">Cantidad:
+                        <input type="number" min="1" value="${item.cantidad}" style="width:70px;"
+                               onchange="updateCompraItemField(${idx}, 'cantidad', this.value)">
+                    </label>
+                    <label style="font-size:0.8em;">Costo unitario ($):
+                        <input type="number" min="0" step="0.01" value="${item.costoUnitario || ''}" style="width:90px;"
+                               onchange="updateCompraItemField(${idx}, 'costoUnitario', this.value)">
+                    </label>
+                    ${!item.esNuevo ? `
+                    <label style="font-size:0.8em;">Nuevo precio de venta (opcional):
+                        <input type="number" min="0" step="0.01" value="${item.nuevoPrecio || ''}" placeholder="Dejar vacío = mantener" style="width:130px;"
+                               onchange="updateCompraItemField(${idx}, 'nuevoPrecio', this.value)">
+                    </label>` : `
+                    <label style="font-size:0.8em;">Precio de venta:
+                        <input type="number" min="0" step="0.01" value="${item.precioVenta}" style="width:100px;"
+                               onchange="updateCompraItemField(${idx}, 'precioVenta', this.value)">
+                    </label>`}
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="delete-btn" onclick="quitarItemCompra(${idx})">🗑️</button>
+            </div>
+        </div>
+    `).join('');
+
+    calcularTotalCompraFactura();
+}
+
+function updateCompraItemField(idx, field, value) {
+    const item = comprasItemsActuales[idx];
+    if (!item) return;
+
+    if (field === 'cantidad') item.cantidad = parseInt(value) || 0;
+    else if (field === 'costoUnitario') item.costoUnitario = parseFloat(value) || 0;
+    else if (field === 'nuevoPrecio') item.nuevoPrecio = value === '' ? '' : parseFloat(value);
+    else if (field === 'precioVenta') item.precioVenta = parseFloat(value) || 0;
+
+    calcularTotalCompraFactura();
+}
+
+function quitarItemCompra(idx) {
+    comprasItemsActuales.splice(idx, 1);
+    renderCompraItemsList();
+}
+
+function calcularTotalCompraFactura() {
+    const total = comprasItemsActuales.reduce((acc, it) => acc + ((it.costoUnitario || 0) * (it.cantidad || 0)), 0);
+    const el = document.getElementById('compraTotalFactura');
+    if (el) el.textContent = total.toLocaleString('es-AR');
+    return total;
+}
+
+/* ---------- Guardar la factura completa ---------- */
+
+async function guardarCompra() {
+    if (comprasItemsActuales.length === 0) {
+        alert('Agregue al menos un producto a la factura.');
+        return;
+    }
+
+    const fecha = document.getElementById('compraFecha').value || new Date().toISOString().split('T')[0];
+    const proveedor = document.getElementById('compraProveedor').value.trim();
+    const numeroFactura = document.getElementById('compraNumeroFactura').value.trim();
+
+    if (!confirm('¿Confirma guardar esta factura de compra? Se actualizará el stock (y precios, si corresponde) de los productos.')) return;
+
+    try {
+        const itemsParaGuardar = [];
+
+        for (const item of comprasItemsActuales) {
+            if (item.esNuevo) {
+                // --- PRODUCTO NUEVO: se crea en promociones con stock inicial = cantidad comprada ---
+                let imagenNombre = null;
+                let imagenUrl = null;
+
+                if (item.imagenFile) {
+                    const fileExt = item.imagenFile.name.split('.').pop();
+                    const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${fileExt}`;
+
+                    const { error: uploadError } = await supabase.storage
+                        .from('promo_images')
+                        .upload(fileName, item.imagenFile);
+
+                    if (uploadError) throw uploadError;
+
+                    const { data: urlData } = supabase.storage.from('promo_images').getPublicUrl(fileName);
+                    imagenNombre = fileName;
+                    imagenUrl = urlData.publicUrl;
+                }
+
+                const { data: nuevoProducto, error: insertError } = await supabase
+                    .from('promociones')
+                    .insert([{
+                        nombre: item.nombre,
+                        precio: item.precioVenta,       // Precio de venta: obligatorio por ser producto nuevo
+                        stock: item.cantidad,            // Stock inicial = cantidad comprada
+                        categoria_id: item.categoriaId,
+                        imagen: imagenNombre,
+                        imagen_url: imagenUrl
+                    }])
+                    .select()
+                    .single();
+
+                if (insertError) throw insertError;
+
+                itemsParaGuardar.push({
+                    esNuevo: true,
+                    productoId: nuevoProducto.id,
+                    nombre: item.nombre,
+                    cantidad: item.cantidad,
+                    costoUnitario: item.costoUnitario || 0,
+                    precioVentaCargado: item.precioVenta
+                });
+
+            } else {
+                // --- PRODUCTO EXISTENTE: solo suma stock; el precio solo cambia si se cargó uno nuevo ---
+                const { data: actual, error: fetchError } = await supabase
+                    .from('promociones')
+                    .select('stock, precio')
+                    .eq('id', item.id)
+                    .single();
+
+                if (fetchError) throw fetchError;
+
+                const nuevoStock = (Number(actual.stock) || 0) + (Number(item.cantidad) || 0);
+                const updateData = { stock: nuevoStock };
+
+                // Solo se toca el precio de venta si el usuario cargó manualmente un valor
+                // distinto al precio actual. Si lo dejó vacío, el producto conserva su precio.
+                const seModificoPrecio = item.nuevoPrecio !== '' && item.nuevoPrecio !== undefined && item.nuevoPrecio !== null
+                    && Number(item.nuevoPrecio) !== Number(actual.precio);
+
+                if (seModificoPrecio) {
+                    updateData.precio = Number(item.nuevoPrecio);
+                }
+
+                const { error: updateError } = await supabase
+                    .from('promociones')
+                    .update(updateData)
+                    .eq('id', item.id);
+
+                if (updateError) throw updateError;
+
+                itemsParaGuardar.push({
+                    esNuevo: false,
+                    productoId: item.id,
+                    nombre: item.nombre,
+                    cantidad: item.cantidad,
+                    costoUnitario: item.costoUnitario || 0,
+                    nuevoPrecio: seModificoPrecio ? Number(item.nuevoPrecio) : null
+                });
+            }
+        }
+
+        const total = calcularTotalCompraFactura();
+
+        const { error: compraError } = await supabase
+            .from('compras')
+            .insert([{
+                fecha,
+                proveedor,
+                numero_factura: numeroFactura,
+                items: itemsParaGuardar,
+                total
+            }]);
+
+        if (compraError) throw compraError;
+
+        // Invalidar caches para reflejar stock/precio actualizados en el resto del panel
+        promosCache = [];
+        allPromos = [];
+
+        showToast('✅ Factura de compra guardada. Stock actualizado.');
+        cerrarModalCompra();
+        fetchCompras();
+
+    } catch (err) {
+        console.error('Error al guardar la compra:', err);
+        alert('Error al guardar la factura de compra: ' + err.message);
+    }
+}
+
+
+
+
 </script>
 
 <div id="modalTotalesPorDia" class="modal" style="display:none; position:fixed; z-index:11000; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.6); justify-content:center; align-items:center;">
@@ -8399,6 +9066,116 @@ async function savePrepChanges() {
 
 
 
+
+<!-- ================= MODAL: Nueva Factura de Compra ================= -->
+<div id="modalCompra" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:20500; justify-content:center; align-items:center; backdrop-filter: blur(2px);">
+    <div style="background:white; width:95%; max-width:800px; max-height:92vh; overflow-y:auto; border-radius:16px; padding:25px; box-shadow: var(--shadow-md); position:relative;">
+        <span onclick="cerrarModalCompra()" style="position:absolute; right:20px; top:15px; cursor:pointer; font-size:28px; color:#666;">&times;</span>
+        <h2 style="margin-top:0; color:var(--secondary);">🧾 Nueva Factura de Compra</h2>
+
+        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:15px;">
+            <div style="flex:1; min-width:150px;">
+                <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">Fecha de la Factura:</label>
+                <input type="date" id="compraFecha" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+            </div>
+            <div style="flex:1; min-width:180px;">
+                <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">Proveedor:</label>
+                <input type="text" id="compraProveedor" placeholder="Nombre del proveedor" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+            </div>
+            <div style="flex:1; min-width:150px;">
+                <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">N° de Factura:</label>
+                <input type="text" id="compraNumeroFactura" placeholder="Ej: 0001-00012345" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+            </div>
+        </div>
+
+        <hr style="border-top:1px solid #eee; margin:15px 0;">
+
+        <!-- Buscador de producto existente -->
+        <div style="position:relative; margin-bottom:10px;">
+            <label style="display:block; font-weight:bold; font-size:0.9em; margin-bottom:4px;">🔍 Agregar producto existente:</label>
+            <input type="text" id="compraBuscarProducto" placeholder="Escriba el nombre del producto..." 
+                   oninput="buscarProductoCompra(this.value)"
+                   style="width:100%; padding:10px; border-radius:8px; border:1px solid #ccc; box-sizing:border-box;">
+            <div id="compraBuscarResultados" style="display:none; position:absolute; top:100%; left:0; width:100%; background:white; border:1px solid #ddd; box-shadow:0 4px 10px rgba(0,0,0,0.15); z-index:200; max-height:220px; overflow-y:auto; border-radius:0 0 8px 8px;"></div>
+        </div>
+
+        <button onclick="toggleNuevoProductoCompraForm()" style="background:#fff; color:#6366f1; border:2px dashed #6366f1; padding:10px; border-radius:10px; cursor:pointer; font-weight:bold; width:100%; margin-bottom:15px;">
+            ➕ Es un producto nuevo (no está en el stock)
+        </button>
+
+        <!-- Formulario producto nuevo -->
+        <div id="compraNuevoProductoForm" style="display:none; background:#f0f7ff; border:1px solid #cbd5f5; border-radius:10px; padding:15px; margin-bottom:15px;">
+            <h4 style="margin-top:0; color:#2c3e50;">Nuevo Producto</h4>
+            <div style="display:flex; flex-wrap:wrap; gap:10px;">
+                <div style="flex:2; min-width:180px;">
+                    <label style="display:block; font-size:0.8em; font-weight:bold;">Nombre:</label>
+                    <input type="text" id="compraNuevoNombre" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
+                </div>
+                <div style="flex:1; min-width:150px;">
+                    <label style="display:block; font-size:0.8em; font-weight:bold;">Categoría:</label>
+                    <div style="display:flex; gap:4px;">
+                        <select id="compraNuevoCategoria" style="flex:1; padding:8px; border-radius:6px; border:1px solid #ccc;"></select>
+                        <button type="button" onclick="crearCategoriaRapidaCompra()" title="Crear nueva categoría" style="padding:8px 10px; border-radius:6px; border:none; background:#2ecc71; color:white; cursor:pointer;">+</button>
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
+                <div style="flex:1; min-width:130px;">
+                    <label style="display:block; font-size:0.8em; font-weight:bold;">Precio de Venta ($):</label>
+                    <input type="number" id="compraNuevoPrecioVenta" min="0" step="0.01" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
+                </div>
+                <div style="flex:1; min-width:130px;">
+                    <label style="display:block; font-size:0.8em; font-weight:bold;">Costo Unitario ($):</label>
+                    <input type="number" id="compraNuevoCosto" min="0" step="0.01" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
+                </div>
+                <div style="flex:1; min-width:110px;">
+                    <label style="display:block; font-size:0.8em; font-weight:bold;">Cantidad Comprada:</label>
+                    <input type="number" id="compraNuevoCantidad" min="1" step="1" value="1" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
+                </div>
+            </div>
+            <div style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+                <button type="button" onclick="abrirModalCompraImagen()" style="padding:8px 14px; border-radius:6px; border:1px solid #6366f1; background:#fff; color:#6366f1; cursor:pointer; font-weight:bold;">
+                    🖼️ Agregar Imagen
+                </button>
+                <img id="compraNuevoImagenPreview" src="" style="display:none; width:44px; height:44px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">
+                <span id="compraNuevoImagenNombre" style="font-size:0.85em; color:#888;">Sin imagen seleccionada</span>
+            </div>
+            <div style="text-align:right; margin-top:12px;">
+                <button type="button" onclick="agregarNuevoProductoACompra()" style="padding:10px 18px; border:none; border-radius:8px; background:#10b981; color:white; cursor:pointer; font-weight:bold;">
+                    Agregar a la Factura
+                </button>
+            </div>
+        </div>
+
+        <!-- Lista de items agregados a la factura -->
+        <h4 style="margin-bottom:8px; color:#2c3e50;">Items de la Factura</h4>
+        <div id="compraItemsList" style="margin-bottom:15px;">
+            <p style="color:#999; font-style:italic;">Aún no agregó productos a esta factura.</p>
+        </div>
+
+        <div style="text-align:right; font-weight:bold; font-size:1.1em; margin-bottom:15px; color:#2c3e50;">
+            Total Factura: $<span id="compraTotalFactura">0</span>
+        </div>
+
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+            <button onclick="cerrarModalCompra()" style="flex:1; max-width:150px; background:#f1f5f9; color:#475569; border:none; padding:12px; border-radius:10px; cursor:pointer; font-weight:600;">Cancelar</button>
+            <button onclick="guardarCompra()" style="flex:1; max-width:250px; background:#6366f1; color:white; border:none; padding:12px; border-radius:10px; cursor:pointer; font-weight:600;">💾 Guardar Factura</button>
+        </div>
+    </div>
+</div>
+
+<!-- Sub-modal para agregar imagen a un producto nuevo dentro de la compra -->
+<div id="modalCompraImagen" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:21000; justify-content:center; align-items:center;">
+    <div style="background:white; width:90%; max-width:400px; border-radius:14px; padding:22px; box-shadow: var(--shadow-md); text-align:center;">
+        <h3 style="margin-top:0;">Agregar Imagen del Producto</h3>
+        <input type="file" id="compraImagenInput" accept="image/*" onchange="previsualizarImagenCompra(this)" style="width:100%; margin-bottom:12px;">
+        <img id="compraImagenModalPreview" src="" style="display:none; max-width:100%; max-height:200px; border-radius:8px; margin-bottom:12px;">
+        <div style="display:flex; gap:10px; justify-content:center;">
+            <button onclick="cerrarModalCompraImagen()" style="flex:1; padding:10px; border:none; border-radius:8px; background:#f1f5f9; cursor:pointer; font-weight:600;">Cancelar</button>
+            <button onclick="confirmarImagenCompra()" style="flex:1; padding:10px; border:none; border-radius:8px; background:#10b981; color:white; cursor:pointer; font-weight:600;">Confirmar</button>
+        </div>
+    </div>
+</div>
 
 <div id="prepOrderModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:99999; justify-content:center; align-items:center;">
     <div style="background:white; width:95%; max-width:700px; height:85vh; border-radius:12px; display:flex; flex-direction:column; overflow:hidden;">

@@ -908,6 +908,15 @@ button[onclick*="delete"] {
     align-items: center;
 }
 
+.compra-item-card { transition: background-color 0.3s ease; }
+.compra-item-nuevo {
+    animation: compraItemNuevoFlash 1.6s ease-out;
+    border: 2px solid #10b981 !important;
+}
+@keyframes compraItemNuevoFlash {
+    0%   { background-color: #d1fae5; }
+    100% { background-color: transparent; }
+}
 
     </style>
 
@@ -8605,12 +8614,16 @@ function addProductoExistenteACompra(id) {
     const promo = promosCache.find(p => String(p.id) === String(id));
     if (!promo) { alert('No se encontró el producto.'); return; }
 
-    // Evitar duplicar el mismo producto: si ya está, solo aumenta la cantidad
-    const existente = comprasItemsActuales.find(it => !it.esNuevo && String(it.id) === String(id));
-    if (existente) {
+    // Evitar duplicar el mismo producto: si ya está, solo aumenta la cantidad y lo sube arriba
+    const existenteIdx = comprasItemsActuales.findIndex(it => !it.esNuevo && String(it.id) === String(id));
+    if (existenteIdx !== -1) {
+        const existente = comprasItemsActuales[existenteIdx];
         existente.cantidad = (Number(existente.cantidad) || 0) + 1;
+        // Lo movemos al principio para que quede a mano
+        comprasItemsActuales.splice(existenteIdx, 1);
+        comprasItemsActuales.unshift(existente);
     } else {
-        comprasItemsActuales.push({
+        comprasItemsActuales.unshift({
             esNuevo: false,
             id: promo.id,
             nombre: promo.nombre,
@@ -8624,7 +8637,7 @@ function addProductoExistenteACompra(id) {
 
     document.getElementById('compraBuscarProducto').value = '';
     document.getElementById('compraBuscarResultados').style.display = 'none';
-    renderCompraItemsList();
+    renderCompraItemsList(0);
 }
 
 /* ---------- Alta de producto NUEVO dentro de la compra ---------- */
@@ -8716,7 +8729,7 @@ function agregarNuevoProductoACompra() {
     if (isNaN(precioVenta) || precioVenta <= 0) { alert('Ingrese el precio de venta del producto nuevo (es obligatorio porque no tiene un precio previo).'); return; }
     if (cantidad <= 0) { alert('Ingrese la cantidad comprada.'); return; }
 
-    comprasItemsActuales.push({
+    comprasItemsActuales.unshift({
         esNuevo: true,
         nombre,
         categoriaId,
@@ -8728,12 +8741,12 @@ function agregarNuevoProductoACompra() {
 
     resetFormNuevoProductoCompra();
     document.getElementById('compraNuevoProductoForm').style.display = 'none';
-    renderCompraItemsList();
+    renderCompraItemsList(0);
 }
 
 /* ---------- Lista de items de la factura en curso ---------- */
 
-function renderCompraItemsList() {
+function renderCompraItemsList(highlightIdx = null) {
     const container = document.getElementById('compraItemsList');
 
     if (comprasItemsActuales.length === 0) {
@@ -8743,14 +8756,15 @@ function renderCompraItemsList() {
     }
 
     container.innerHTML = comprasItemsActuales.map((item, idx) => `
-        <div class="card" style="align-items:center;">
+        <div class="card compra-item-card ${idx === highlightIdx ? 'compra-item-nuevo' : ''}" style="align-items:center;">
             <div class="card-info">
                 <b>${escapeHtml(item.nombre)} ${item.esNuevo ? '<span style="color:#10b981; font-size:0.8em;">(NUEVO)</span>' : ''}</b>
                 ${!item.esNuevo ? `<span class="card-stock">Stock actual: ${item.stockActual} · Precio actual: $${item.precioActual}</span>` : ''}
                 <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:4px;">
                     <label style="font-size:0.8em;">Cantidad:
-                        <input type="number" min="1" value="${item.cantidad}" style="width:70px;"
-                               onchange="updateCompraItemField(${idx}, 'cantidad', this.value)">
+                        <input type="number" min="1" value="${item.cantidad}" style="width:70px;" autofocus
+                               onchange="updateCompraItemField(${idx}, 'cantidad', this.value)"
+                               ${idx === highlightIdx ? 'id="compraItemCantidadFoco"' : ''}>
                     </label>
                     <label style="font-size:0.8em;">Costo unitario ($):
                         <input type="number" min="0" step="0.01" value="${item.costoUnitario || ''}" style="width:90px;"
@@ -8774,6 +8788,16 @@ function renderCompraItemsList() {
     `).join('');
 
     calcularTotalCompraFactura();
+
+    // Si se acaba de agregar un ítem, lo llevamos a la vista y enfocamos su campo de cantidad
+    if (highlightIdx !== null) {
+        const focoInput = document.getElementById('compraItemCantidadFoco');
+        if (focoInput) {
+            focoInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            focoInput.focus();
+            focoInput.select();
+        }
+    }
 }
 
 function updateCompraItemField(idx, field, value) {

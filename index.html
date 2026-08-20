@@ -5424,17 +5424,34 @@ async function cargarReporteIngresos() {
     // 'pedidos_por_rango', que no existe en la base). El filtrado por
     // fecha de pago se hace igual que antes, del lado del cliente,
     // recorriendo el array 'pagos' de cada pedido.
-    const { data, error } = await supabase
-        .from('pedidos')
-        .select('cliente, pagos');
+    //
+    // 🛠️ IMPORTANTE: Supabase/PostgREST devuelve como máximo 1000 filas por
+    // consulta aunque no se lo pidas explícitamente. Si hay más de 1000
+    // pedidos cargados, un solo select() se queda corto y "pierde" pedidos
+    // viejos (y sus pagos) sin avisar con ningún error. Por eso paginamos
+    // con .range() hasta traer la tabla completa.
+    let pedidos = [];
+    const TAMANIO_PAGINA = 1000;
+    let desdeFila = 0;
+    while (true) {
+        const { data: bloque, error } = await supabase
+            .from('pedidos')
+            .select('cliente, pagos')
+            .range(desdeFila, desdeFila + TAMANIO_PAGINA - 1);
 
-    if (error) {
-        console.error("Error al cargar pedidos:", error);
-        alert("Error al cargar los ingresos: " + error.message);
-        return;
+        if (error) {
+            console.error("Error al cargar pedidos:", error);
+            alert("Error al cargar los ingresos: " + error.message);
+            return;
+        }
+
+        if (!bloque || bloque.length === 0) break;
+
+        pedidos = pedidos.concat(bloque);
+
+        if (bloque.length < TAMANIO_PAGINA) break; // Ya trajimos todo
+        desdeFila += TAMANIO_PAGINA;
     }
-
-    const pedidos = Array.isArray(data) ? data : [];
 
     let efec = 0;
     let trans = 0;

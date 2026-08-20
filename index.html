@@ -1949,18 +1949,64 @@ async function verDetalleCtaCte(identificador) {
 
         if (error) throw error;
 
-        if (!pedidos || pedidos.length === 0) {
-            return alert('No se encontraron pedidos pendientes.');
+        // 🆕 Traemos TAMBIÉN todos los pedidos del cliente (sin filtrar por saldo)
+        // para poder armar el historial completo de pagos: un pago puede
+        // pertenecer a un pedido que ya quedó totalmente saldado, y aun así
+        // tiene que figurar en el resumen de pagos cargados.
+        let queryTodos = supabase
+            .from('pedidos')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (/^\d+$/.test(String(identificador))) {
+            queryTodos = queryTodos.eq('dni', identificador);
+        } else {
+            queryTodos = queryTodos.eq('cliente', identificador);
         }
+
+        const { data: todosLosPedidos, error: errorTodos } = await queryTodos;
+        if (errorTodos) throw errorTodos;
+
+        if ((!pedidos || pedidos.length === 0) && (!todosLosPedidos || todosLosPedidos.length === 0)) {
+            return alert('No se encontraron pedidos para este cliente.');
+        }
+
+        // 🆕 Armamos la lista plana de TODOS los pagos cargados a este cliente,
+        // juntando el array "pagos" de cada pedido, con la fecha, monto,
+        // método y (si es transferencia) a quién se transfirió.
+        const historialPagos = [];
+        (todosLosPedidos || []).forEach(p => {
+            const pagosArray = Array.isArray(p.pagos) ? p.pagos : [];
+            pagosArray.forEach(pg => {
+                historialPagos.push({
+                    pedidoId: p.id,
+                    fecha: pg.fecha || p.created_at,
+                    monto: Number(pg.monto || 0),
+                    metodo: pg.metodo || 'Sin especificar',
+                    destinatario: pg.destinatario || ''
+                });
+            });
+        });
+        // Más reciente primero
+        historialPagos.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+
+        const totalPagadoHistorico = historialPagos.reduce((s, pg) => s + pg.monto, 0);
+
+        const nombreCliente = (pedidos && pedidos[0]) ? pedidos[0].cliente
+            : ((todosLosPedidos && todosLosPedidos[0]) ? todosLosPedidos[0].cliente : identificador);
 
         let deudaTotal = 0;
 
         let html = `
             <div style="max-height:70vh; overflow-y:auto; padding:10px;">
                 <h2 style="margin-top:0;">
-                    📋 Cuenta Corriente - ${pedidos[0].cliente}
+                    📋 Cuenta Corriente - ${nombreCliente}
                 </h2>
         `;
+
+        if (!pedidos || pedidos.length === 0) {
+            html += `<p style="color:#27ae60; font-weight:bold;">✅ Este cliente no tiene saldo pendiente.</p>`;
+        }
 
         pedidos.forEach(p => {
 
@@ -1997,6 +2043,57 @@ async function verDetalleCtaCte(identificador) {
                 </div>
             `;
         });
+
+        // 🆕 Sección: Historial de Pagos cargados a este cliente
+        html += `
+            <div style="margin-top:20px;">
+                <h3 style="margin-bottom:10px; color:#2c3e50;">💳 Historial de Pagos</h3>
+        `;
+
+        if (historialPagos.length === 0) {
+            html += `<p style="color:#888; font-size:0.9em;">Este cliente todavía no tiene pagos cargados.</p>`;
+        } else {
+            html += `
+                <table style="width:100%; border-collapse:collapse; font-size:13px; background:white; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+                    <thead>
+                        <tr style="background:#f1f5f9;">
+                            <th style="padding:8px; text-align:left;">Fecha</th>
+                            <th style="padding:8px; text-align:left;">Pedido</th>
+                            <th style="padding:8px; text-align:right;">Monto</th>
+                            <th style="padding:8px; text-align:left;">Método</th>
+                            <th style="padding:8px; text-align:left;">Destinatario</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${historialPagos.map(pg => {
+                            const fechaFmt = /^\d{4}-\d{2}-\d{2}/.test(String(pg.fecha))
+                                ? new Date(pg.fecha + 'T00:00:00').toLocaleDateString('es-AR')
+                                : new Date(pg.fecha).toLocaleDateString('es-AR');
+                            const esTransferencia = String(pg.metodo).toLowerCase() === 'transferencia';
+                            const icono = esTransferencia ? '🏦' : '💵';
+                            return `
+                                <tr style="border-bottom:1px solid #f1f5f9;">
+                                    <td style="padding:8px;">${fechaFmt}</td>
+                                    <td style="padding:8px;">#${pg.pedidoId}</td>
+                                    <td style="padding:8px; text-align:right; color:#10b981; font-weight:bold;">$${pg.monto.toLocaleString('es-AR')}</td>
+                                    <td style="padding:8px;">${icono} ${safeText(pg.metodo)}</td>
+                                    <td style="padding:8px; color:#555;">${esTransferencia ? safeText(pg.destinatario || 'Sin especificar') : '—'}</td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                    <tfoot>
+                        <tr style="background:#f0fdf4; font-weight:bold;">
+                            <td colspan="2" style="padding:10px; text-align:right;">Total Pagado:</td>
+                            <td style="padding:10px; text-align:right; color:#10b981;">$${totalPagadoHistorico.toLocaleString('es-AR')}</td>
+                            <td colspan="2"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            `;
+        }
+
+        html += `</div>`;
 
         html += `
             <div style="
@@ -2130,8 +2227,12 @@ function abrirModalPagoCtaCte(identificador, nombre, saldoTotal) {
     document.getElementById('pagoCtaCteFecha').value = new Date().toLocaleDateString('sv-SE');
 }
 
+let isSavingPagoCtaCte = false; // Bloqueo para evitar pagos duplicados por doble clic
+
 async function confirmarPagoCtaCte() {
     if (!clienteCtaCteActual) return;
+    if (isSavingPagoCtaCte) return; // Ya hay un guardado en curso, ignoramos el clic extra
+    isSavingPagoCtaCte = true;
 
     const montoInput = document.getElementById('pagoCtaCteMonto');
     const fechaInput = document.getElementById('pagoCtaCteFecha');
@@ -2144,7 +2245,10 @@ async function confirmarPagoCtaCte() {
     const fechaRaw = fechaInput.value || new Date().toISOString();
     const fecha = fechaRaw.substring(0, 10);
 
-    if (!montoRestante || montoRestante <= 0) return alert("Ingresa un monto valido.");
+    if (!montoRestante || montoRestante <= 0) {
+        isSavingPagoCtaCte = false;
+        return alert("Ingresa un monto valido.");
+    }
 
     const { identificador } = clienteCtaCteActual;
 
@@ -2231,6 +2335,8 @@ async function confirmarPagoCtaCte() {
     } catch (err) {
         console.error(err);
         alert("Error al guardar el pago: " + err.message);
+    } finally {
+        isSavingPagoCtaCte = false;
     }
 }
 
@@ -7836,7 +7942,11 @@ function toggleDestinatarioCC(val) {
 }
 
 
+let isSavingNuevoPagoCC = false; // Bloqueo para evitar pagos duplicados por doble clic
+
 async function guardarNuevoPagoCC() {
+    if (isSavingNuevoPagoCC) return;
+
     const montoInput = document.getElementById('newPagoMonto');
     const metodoInput = document.getElementById('newPagoMetodoUnico');
     const fechaInput = document.getElementById('newPagoFecha'); 
@@ -7853,6 +7963,7 @@ async function guardarNuevoPagoCC() {
 
     if (!monto || monto <= 0) return alert("Ingresa un monto válido.");
 
+    isSavingNuevoPagoCC = true;
     try {
         let historialActual = [];
         if (pedidoSeleccionado.pagos) {
@@ -7898,6 +8009,8 @@ async function guardarNuevoPagoCC() {
 
     } catch (err) {
         alert("Error al guardar: " + err.message);
+    } finally {
+        isSavingNuevoPagoCC = false;
     }
 }
 

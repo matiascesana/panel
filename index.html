@@ -4529,13 +4529,24 @@ function renderPedidosTotales(pedidos) {
     const totalesPorDia = {}; // Objeto para agrupar
 
     pedidos.filter(p => !p.archivado).forEach(p => {
-        // Extraer fecha en formato DD/MM/AAAA
-        const fecha = p.created_at ? new Date(p.created_at).toLocaleDateString('es-AR') : 'Sin Fecha';
-        
-        if (!totalesPorDia[fecha]) totalesPorDia[fecha] = { ef: 0, tr: 0 };
-
         if (p.pagos && Array.isArray(p.pagos)) {
             p.pagos.forEach(pago => {
+                // 🛠️ Usamos la fecha propia del pago (pago.fecha) en vez de la fecha
+                // de creación del pedido (p.created_at). Esto es clave para Cuenta
+                // Corriente: un pago puede registrarse días/semanas después de creado
+                // el pedido, y antes se agrupaba igual bajo la fecha del pedido,
+                // haciendo que "desapareciera" al filtrar movimientos por fecha real.
+                let fecha;
+                if (pago.fecha) {
+                    // pago.fecha viene como 'YYYY-MM-DD' -> lo pasamos a DD/MM/AAAA
+                    const [y, m, d] = pago.fecha.split('-');
+                    fecha = (y && m && d) ? `${d}/${m}/${y}` : pago.fecha;
+                } else {
+                    fecha = p.created_at ? new Date(p.created_at).toLocaleDateString('es-AR') : 'Sin Fecha';
+                }
+
+                if (!totalesPorDia[fecha]) totalesPorDia[fecha] = { ef: 0, tr: 0 };
+
                 if (pago.metodo === 'Efectivo') {
                     totalEfectivo += pago.monto;
                     totalesPorDia[fecha].ef += pago.monto;

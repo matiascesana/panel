@@ -3628,7 +3628,7 @@ async function exportSelectedPromos() {
         if (promoError) throw promoError;
 
         const selectedPromos = selectedIds
-            .map(id => allPromos.find(p => p.id === id))
+            .map(id => allPromos.find(p => String(p.id) === String(id)))
             .filter(Boolean);
 
         if (!selectedPromos.length) return alert('No se encontraron promociones.');
@@ -7360,7 +7360,10 @@ async function enviarNovedad() {
         // la subimos primero al mismo bucket que usan las promociones.
         const archivo = imagenInput.files[0];
         if (archivo) {
-            const path = `novedades/${Date.now()}_${archivo.name}`;
+            // Igual que en promociones: SIN subcarpeta, directo a la raíz del bucket
+            // (una subcarpeta como "novedades/" no tiene acceso público y por eso
+            // la imagen no se mostraba en comunicaciones.html)
+            const path = `novedad_${Date.now()}_${archivo.name}`;
             const { error: uploadError } = await supabase.storage
                 .from('promo_images')
                 .upload(path, archivo);
@@ -8007,13 +8010,41 @@ async function fetchAllPromos() {
     
     console.log('Cargando todas las promociones...');
     // Se asume que 'promociones' tiene una columna 'categoria_id'
-    const { data, error } = await supabase.from('promociones').select('id, nombre, stock, categoria_id'); 
-    
-    if (error) {
-        console.error('Error al cargar todas las promociones:', error);
-        return;
+    //
+    // ⚠️ Supabase/PostgREST limita cada select sin rango explícito a 1000 filas
+    // por defecto (max-rows). Si la tabla tiene más de 1000 registros, un
+    // .select() simple SIEMPRE se queda corto sin avisar (no da error, solo
+    // trunca). Por eso paginamos con .range() hasta traer todas las filas.
+    const PAGE_SIZE = 1000;
+    let data = [];
+    let from = 0;
+    while (true) {
+        const { data: page, error } = await supabase
+            .from('promociones')
+            .select('id, nombre, stock, categoria_id')
+            .range(from, from + PAGE_SIZE - 1);
+
+        if (error) {
+            console.error('Error al cargar todas las promociones:', error);
+            return;
+        }
+        if (!page || page.length === 0) break;
+
+        data = data.concat(page);
+        if (page.length < PAGE_SIZE) break; // última página parcial: ya llegamos al final
+        from += PAGE_SIZE;
     }
-    
+
+    // 🔍 DIAGNÓSTICO TEMPORAL: comparar cuántas filas trajimos en total vs. el total
+    // real de la tabla, para confirmar que la paginación cubrió todo.
+    const { count: totalReal } = await supabase.from('promociones').select('*', { count: 'exact', head: true });
+    console.log(`[Diagnóstico] Filas traídas (paginado): ${data.length} | Total real en la tabla: ${totalReal}`);
+    if (totalReal !== null && data.length < totalReal) {
+        console.warn('⚠️ Incluso paginando, el total sigue sin coincidir. Revisar políticas de RLS sobre la tabla "promociones".');
+    }
+    // Muestra los primeros 5 IDs y su tipo, para comparar contra los IDs de los pedidos
+    console.log('[Diagnóstico] Muestra de IDs en promociones:', data.slice(0, 5).map(p => ({ id: p.id, tipo: typeof p.id })));
+
     // Mapear el nombre de la categoría a cada promoción
     allPromos = data.map(promo => {
         const category = allCategories.find(c => c.id === promo.categoria_id);
@@ -8117,8 +8148,10 @@ async function fetchSalesData() {
         return;
     }
 
-    // 3. Agregar las ventas por producto
+    // 3. Agregar las ventas por producto (guardamos también el nombre histórico
+    //    que quedó registrado en el pedido, por si el producto luego se elimina)
     const salesMap = new Map();
+    const nombresHistoricos = new Map();
 
     orders.forEach(order => {
         if (order.productos && Array.isArray(order.productos)) {
@@ -8129,6 +8162,11 @@ async function fetchSalesData() {
                 if (prodId && qty > 0) {
                     const currentTotal = salesMap.get(prodId) || 0;
                     salesMap.set(prodId, currentTotal + qty);
+
+                    // Guardamos el nombre que tenía el producto al momento de la venta
+                    if (product.nombre && !nombresHistoricos.has(prodId)) {
+                        nombresHistoricos.set(prodId, product.nombre);
+                    }
                 }
             });
         }
@@ -8137,15 +8175,45 @@ async function fetchSalesData() {
     // 4. Mapear los datos de ventas con nombre, stock, categoría e ID (para filtrar luego)
     const reportData = [];
     salesMap.forEach((totalSold, prodId) => {
-        const promo = allPromos.find(p => p.id === prodId);
+        // Comparamos convirtiendo ambos lados a String: Supabase suele devolver
+        // las columnas bigint como texto (ej. "1021"), mientras que el id guardado
+        // dentro del pedido (product.id) se guarda como número (1021). Con === esos
+        // dos nunca matchean aunque sean el mismo producto, y eso hacía que productos
+        // que SÍ existen en la base figuraran como "eliminados". Con String() a ambos
+        // lados el match funciona sin importar el tipo original de cada uno.
+        const promo = allPromos.find(p => String(p.id) === String(prodId));
         const stockActual = promo ? (promo.stock ?? 0) : 'N/A';
+
+        // 🔍 DIAGNÓSTICO TEMPORAL: si no matchea, mostramos en consola el ID buscado
+        // y sus tipos, para confirmar si es un tema de tipos, IDs realmente distintos,
+        // o que el producto no está llegando en allPromos por otro motivo (ej. RLS).
+        if (!promo) {
+            console.warn(
+                '[Reporte Ventas] No se encontró match para el producto vendido:',
+                'prodId =', prodId, '(tipo:', typeof prodId, ')',
+                '| ¿Existe algún promo con ID parecido?',
+                allPromos.filter(p => String(p.id).includes(String(prodId)) || String(prodId).includes(String(p.id)))
+            );
+        }
+
+        // Si el producto ya no existe, usamos el nombre real guardado en el pedido
+        // (y si por algún motivo tampoco hay nombre histórico, mostramos el ID como último recurso)
+        let nombreFinal;
+        if (promo) {
+            nombreFinal = promo.nombre;
+        } else {
+            const nombreGuardado = nombresHistoricos.get(prodId);
+            nombreFinal = nombreGuardado
+                ? `${nombreGuardado} (producto eliminado)`
+                : `ID Desconocido (${prodId})`;
+        }
 
         reportData.push({
             id: prodId,
-            nombre: promo ? promo.nombre : `ID Desconocido (${prodId})`,
+            nombre: nombreFinal,
             stock: stockActual,
             vendido: totalSold,
-            categoria: promo ? promo.categoria_nombre : 'Sin Categoría',
+            categoria: promo ? promo.categoria_nombre : 'Producto eliminado',
             categoriaId: promo ? (promo.categoria_id ?? '') : '',
         });
     });

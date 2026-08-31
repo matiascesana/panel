@@ -171,6 +171,9 @@ body {
     }
 }
         input, select, button { margin-bottom: 8px; padding: 6px; font-size: 14px; border-radius: 4px; border: 1px solid #ccc; }
+        .form-group { margin-bottom: 14px; }
+        .form-group label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 13px; color: #333; }
+        .form-control { width: 100%; box-sizing: border-box; padding: 10px; }
         button[type=submit] { background: var(--accent); color: #fff; border: none; cursor: pointer; }
         button[type=submit]:hover { background: #e8434f; }
         #menuBtn { position: absolute; left: 12px; top: 12px; background: #3498db; color: white; font-size: 22px; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; z-index: 2000; display: none; }
@@ -945,6 +948,7 @@ button[onclick*="delete"] {
     <li><button class="tab-btn" data-tab="tiposProducto">Tipos de Producto</button></li>
     <li><button class="tab-btn" data-tab="localidades">Localidades</button></li>
     <li><button class="tab-btn" data-tab="admin">Ingresos y Gastos</button></li>
+    <li><button class="tab-btn" data-tab="novedades">📢 Novedades</button></li>
   </ul>
 </nav>
    
@@ -1136,6 +1140,53 @@ button[onclick*="delete"] {
   </button>
 
   <div id="tipoList"></div>
+</section>         
+
+<section id="novedades" class="section">
+  <h2 style="margin-bottom:15px;">📢 Novedades / Comunicación con Clientes</h2>
+  <p style="color:#555; margin-bottom:15px;">Enviá un mensaje individual (a un cliente puntual), por zona (localidad) o a todos. Lo van a ver en la app de Novedades, agrupado por fecha.</p>
+
+  <div style="background:#fff; padding:20px; border-radius:10px; border:1px solid #ddd; margin-bottom:25px; max-width:600px;">
+    <div class="form-group">
+      <label>¿A quién va dirigido?</label>
+      <select id="novedadTargetType" class="form-control" onchange="onCambioTargetTypeNovedad()">
+        <option value="todos">📢 Todos los clientes</option>
+        <option value="zona">📍 Por Zona / Localidad</option>
+        <option value="individual">👤 Cliente Individual</option>
+      </select>
+    </div>
+
+    <div class="form-group" id="novedadZonaGroup" style="display:none;">
+      <label>Localidad:</label>
+      <select id="novedadLocalidad" class="form-control">
+        <option value="">Cargando localidades...</option>
+      </select>
+    </div>
+
+    <div class="form-group" id="novedadIndividualGroup" style="display:none;">
+      <label>Buscar cliente (por nombre o DNI):</label>
+      <input type="text" id="novedadBuscarCliente" class="form-control" placeholder="Escribí un nombre o DNI..." oninput="buscarClienteParaNovedad(this.value)">
+      <div id="novedadClienteResultados" style="max-height:180px; overflow-y:auto; border:1px solid #eee; border-radius:6px; margin-top:6px; display:none;"></div>
+      <div id="novedadClienteSeleccionado" style="margin-top:8px; font-weight:bold; color:#2c3e50;"></div>
+    </div>
+
+    <div class="form-group">
+      <label>Título (opcional):</label>
+      <input type="text" id="novedadTitulo" class="form-control" placeholder="Ej: Nueva promoción de fin de mes">
+    </div>
+
+    <div class="form-group">
+      <label>Mensaje:</label>
+      <textarea id="novedadMensaje" class="form-control" rows="4" placeholder="Escribí el mensaje que va a ver el cliente..."></textarea>
+    </div>
+
+    <button onclick="enviarNovedad()" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-weight:bold;">
+      🚀 Enviar Novedad
+    </button>
+  </div>
+
+  <h3 style="margin-bottom:10px;">Historial de novedades enviadas</h3>
+  <div id="novedadesEnviadasList"></div>
 </section>         
 
 
@@ -2665,6 +2716,9 @@ function activateSection(tab) {
             break;
 case 'ctaCte':
     break;
+        case 'novedades':
+            if (typeof initNovedadesSection === 'function') initNovedadesSection();
+            break;
     }
 }
 
@@ -7141,6 +7195,207 @@ async function guardarNuevoTipo(nombre) {
         fetchTiposProducto();
     } catch (err) {
         alert("Error al agregar tipo de producto: " + err.message);
+    }
+}
+
+
+// =========================================================
+// ================= NOVEDADES / COMUNICACIÓN =================
+// Mensajes que los clientes ven en la app de Novedades (PWA aparte).
+// Se pueden mandar a: todos, una zona/localidad puntual, o un cliente
+// individual (identificado por DNI, buscado entre los pedidos existentes
+// ya que no hay una tabla "clientes" separada en este sistema).
+// =========================================================
+
+let clienteSeleccionadoNovedad = null; // { dni, nombre }
+let debounceBusquedaCliente = null;
+
+function initNovedadesSection() {
+    cargarLocalidadesParaNovedad();
+    fetchNovedadesEnviadas();
+}
+
+async function cargarLocalidadesParaNovedad() {
+    try {
+        const { data, error } = await supabase.from("localidades").select("id, nombre").order("nombre");
+        if (error) throw error;
+        const select = document.getElementById("novedadLocalidad");
+        select.innerHTML = '<option value="">Seleccioná una localidad</option>' +
+            (data || []).map(l => `<option value="${l.id}">${escapeHtml(l.nombre)}</option>`).join('');
+    } catch (err) {
+        console.error("Error cargando localidades para novedad:", err);
+    }
+}
+
+function onCambioTargetTypeNovedad() {
+    const tipo = document.getElementById("novedadTargetType").value;
+    document.getElementById("novedadZonaGroup").style.display = (tipo === "zona") ? "block" : "none";
+    document.getElementById("novedadIndividualGroup").style.display = (tipo === "individual") ? "block" : "none";
+}
+
+// Busca clientes por nombre o DNI entre los pedidos ya cargados (con debounce
+// para no disparar una consulta por cada tecla).
+function buscarClienteParaNovedad(texto) {
+    clearTimeout(debounceBusquedaCliente);
+    const resultadosDiv = document.getElementById("novedadClienteResultados");
+
+    if (!texto || texto.trim().length < 2) {
+        resultadosDiv.style.display = "none";
+        resultadosDiv.innerHTML = "";
+        return;
+    }
+
+    debounceBusquedaCliente = setTimeout(async () => {
+        try {
+            const { data, error } = await supabase
+                .from("pedidos")
+                .select("cliente, dni")
+                .or(`cliente.ilike.%${texto}%,dni.ilike.%${texto}%`)
+                .limit(50);
+
+            if (error) throw error;
+
+            // Deduplicar por DNI (un mismo cliente puede tener varios pedidos)
+            const vistos = new Set();
+            const unicos = (data || []).filter(p => {
+                if (!p.dni || vistos.has(p.dni)) return false;
+                vistos.add(p.dni);
+                return true;
+            });
+
+            if (unicos.length === 0) {
+                resultadosDiv.innerHTML = '<p style="padding:10px; color:#888; margin:0;">Sin resultados.</p>';
+                resultadosDiv.style.display = "block";
+                return;
+            }
+
+            resultadosDiv.innerHTML = unicos.map(c => `
+                <div onclick='seleccionarClienteNovedad(${JSON.stringify(c.dni)}, ${JSON.stringify(c.cliente)})'
+                     style="padding:10px; cursor:pointer; border-bottom:1px solid #f0f0f0;"
+                     onmouseover="this.style.background='#f5f9ff'" onmouseout="this.style.background='#fff'">
+                    <b>${escapeHtml(c.cliente || '')}</b> — DNI: ${escapeHtml(c.dni || '')}
+                </div>
+            `).join('');
+            resultadosDiv.style.display = "block";
+        } catch (err) {
+            console.error("Error buscando cliente para novedad:", err);
+        }
+    }, 300);
+}
+
+function seleccionarClienteNovedad(dni, nombre) {
+    clienteSeleccionadoNovedad = { dni, nombre };
+    document.getElementById("novedadClienteSeleccionado").textContent = `Seleccionado: ${nombre} (DNI: ${dni})`;
+    document.getElementById("novedadClienteResultados").style.display = "none";
+    document.getElementById("novedadBuscarCliente").value = "";
+}
+
+async function enviarNovedad() {
+    const targetType = document.getElementById("novedadTargetType").value;
+    const titulo = document.getElementById("novedadTitulo").value.trim();
+    const mensaje = document.getElementById("novedadMensaje").value.trim();
+
+    if (!mensaje) {
+        alert("Escribí un mensaje antes de enviar.");
+        return;
+    }
+
+    const payload = {
+        titulo: titulo || null,
+        mensaje,
+        target_type: targetType,
+        target_localidad_id: null,
+        target_dni: null,
+        target_nombre: null
+    };
+
+    if (targetType === "zona") {
+        const localidadId = document.getElementById("novedadLocalidad").value;
+        if (!localidadId) {
+            alert("Elegí una localidad/zona.");
+            return;
+        }
+        payload.target_localidad_id = parseInt(localidadId, 10);
+    }
+
+    if (targetType === "individual") {
+        if (!clienteSeleccionadoNovedad) {
+            alert("Buscá y seleccioná un cliente antes de enviar.");
+            return;
+        }
+        payload.target_dni = clienteSeleccionadoNovedad.dni;
+        payload.target_nombre = clienteSeleccionadoNovedad.nombre;
+    }
+
+    try {
+        const { error } = await supabase.from("novedades").insert([payload]);
+        if (error) throw error;
+
+        alert("✅ Novedad enviada correctamente.");
+        document.getElementById("novedadTitulo").value = "";
+        document.getElementById("novedadMensaje").value = "";
+        document.getElementById("novedadClienteSeleccionado").textContent = "";
+        clienteSeleccionadoNovedad = null;
+
+        fetchNovedadesEnviadas();
+    } catch (err) {
+        console.error("Error enviando novedad:", err);
+        alert("Error al enviar la novedad: " + (err.message || "Error desconocido. Verificá que la tabla 'novedades' exista en Supabase."));
+    }
+}
+
+async function fetchNovedadesEnviadas() {
+    const container = document.getElementById("novedadesEnviadasList");
+    if (!container) return;
+
+    container.innerHTML = "Cargando...";
+
+    try {
+        const { data, error } = await supabase.from("novedades")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .limit(100);
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+            container.innerHTML = '<p style="color:#888;">Todavía no enviaste ninguna novedad.</p>';
+            return;
+        }
+
+        container.innerHTML = data.map(n => {
+            let etiqueta = "📢 Todos";
+            if (n.target_type === "zona") etiqueta = `📍 Zona (ID ${n.target_localidad_id})`;
+            if (n.target_type === "individual") etiqueta = `👤 ${escapeHtml(n.target_nombre || '')} (DNI ${escapeHtml(n.target_dni || '')})`;
+
+            return `
+                <div class="card" style="align-items:flex-start; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                        <b>${escapeHtml(n.titulo || '(Sin título)')}</b>
+                        <span style="font-size:0.8em; color:#888;">${new Date(n.created_at).toLocaleString()}</span>
+                    </div>
+                    <p style="margin:6px 0; white-space:pre-line;">${escapeHtml(n.mensaje)}</p>
+                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                        <span style="font-size:0.85em; color:#3498db; font-weight:bold;">${etiqueta}</span>
+                        <button class="delete-btn" onclick="eliminarNovedad(${n.id})">🗑️ Eliminar</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        console.error("Error cargando novedades enviadas:", err);
+        container.innerHTML = `<p style="color:red;">Error al cargar novedades: ${err.message || 'Verificá que la tabla "novedades" exista en Supabase.'}</p>`;
+    }
+}
+
+async function eliminarNovedad(id) {
+    if (!confirm("¿Eliminar esta novedad? Los clientes ya no la verán.")) return;
+    try {
+        const { error } = await supabase.from("novedades").delete().eq("id", id);
+        if (error) throw error;
+        fetchNovedadesEnviadas();
+    } catch (err) {
+        alert("Error al eliminar novedad: " + err.message);
     }
 }
 

@@ -1180,9 +1180,30 @@ button[onclick*="delete"] {
       <textarea id="novedadMensaje" class="form-control" rows="4" placeholder="Escribí el mensaje que va a ver el cliente..."></textarea>
     </div>
 
-    <button onclick="enviarNovedad()" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-weight:bold;">
+    <div class="form-group">
+      <label>Imagen del producto (opcional):</label>
+      <input type="file" id="novedadImagenInput" accept="image/*">
+      <div id="novedadImagenPreview" style="margin-top:8px;"></div>
+    </div>
+
+    <button onclick="enviarNovedad()" id="btnEnviarNovedad" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-weight:bold;">
       🚀 Enviar Novedad
     </button>
+  </div>
+
+  <div style="background:#fff; padding:20px; border-radius:10px; border:1px solid #3498db; background-color:#f0f7ff; margin-bottom:25px; max-width:600px;">
+    <h3 style="margin-top:0;">📄 Boletín / Catálogo Mensual (PDF)</h3>
+    <p style="color:#555; font-size:0.9em;">Se sube UNA vez al mes. Al subir uno nuevo, el anterior se reemplaza automáticamente (los clientes siempre ven el PDF más reciente, sin descargarlo, dentro de la app de Novedades).</p>
+    <div id="boletinEstadoActual" style="margin-bottom:12px; font-weight:bold;">Cargando estado...</div>
+    <input type="file" id="boletinPdfInput" accept="application/pdf">
+    <div style="margin-top:10px; display:flex; gap:10px;">
+      <button onclick="subirBoletinMensual()" style="background:#2c3e50; color:#fff; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-weight:bold;">
+        ⬆️ Subir / Reemplazar Boletín
+      </button>
+      <button onclick="quitarBoletinMensual()" class="delete-btn" style="padding:10px 20px;">
+        🗑️ Quitar Boletín
+      </button>
+    </div>
   </div>
 
   <h3 style="margin-bottom:10px;">Historial de novedades enviadas</h3>
@@ -7213,6 +7234,7 @@ let debounceBusquedaCliente = null;
 function initNovedadesSection() {
     cargarLocalidadesParaNovedad();
     fetchNovedadesEnviadas();
+    fetchEstadoBoletin();
 }
 
 async function cargarLocalidadesParaNovedad() {
@@ -7294,6 +7316,8 @@ async function enviarNovedad() {
     const targetType = document.getElementById("novedadTargetType").value;
     const titulo = document.getElementById("novedadTitulo").value.trim();
     const mensaje = document.getElementById("novedadMensaje").value.trim();
+    const imagenInput = document.getElementById("novedadImagenInput");
+    const btnEnviar = document.getElementById("btnEnviarNovedad");
 
     if (!mensaje) {
         alert("Escribí un mensaje antes de enviar.");
@@ -7306,7 +7330,8 @@ async function enviarNovedad() {
         target_type: targetType,
         target_localidad_id: null,
         target_dni: null,
-        target_nombre: null
+        target_nombre: null,
+        imagen_url: null
     };
 
     if (targetType === "zona") {
@@ -7327,7 +7352,24 @@ async function enviarNovedad() {
         payload.target_nombre = clienteSeleccionadoNovedad.nombre;
     }
 
+    btnEnviar.disabled = true;
+    btnEnviar.textContent = "Enviando...";
+
     try {
+        // Si eligieron una imagen (ej. foto del producto nuevo/en promo),
+        // la subimos primero al mismo bucket que usan las promociones.
+        const archivo = imagenInput.files[0];
+        if (archivo) {
+            const path = `novedades/${Date.now()}_${archivo.name}`;
+            const { error: uploadError } = await supabase.storage
+                .from('promo_images')
+                .upload(path, archivo);
+            if (uploadError) throw uploadError;
+
+            const { data: publicData } = supabase.storage.from('promo_images').getPublicUrl(path);
+            payload.imagen_url = publicData?.publicUrl || null;
+        }
+
         const { error } = await supabase.from("novedades").insert([payload]);
         if (error) throw error;
 
@@ -7335,14 +7377,30 @@ async function enviarNovedad() {
         document.getElementById("novedadTitulo").value = "";
         document.getElementById("novedadMensaje").value = "";
         document.getElementById("novedadClienteSeleccionado").textContent = "";
+        imagenInput.value = "";
+        document.getElementById("novedadImagenPreview").innerHTML = "";
         clienteSeleccionadoNovedad = null;
 
         fetchNovedadesEnviadas();
     } catch (err) {
         console.error("Error enviando novedad:", err);
         alert("Error al enviar la novedad: " + (err.message || "Error desconocido. Verificá que la tabla 'novedades' exista en Supabase."));
+    } finally {
+        btnEnviar.disabled = false;
+        btnEnviar.textContent = "🚀 Enviar Novedad";
     }
 }
+
+// Vista previa de la imagen elegida antes de enviarla
+document.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'novedadImagenInput') {
+        const preview = document.getElementById('novedadImagenPreview');
+        const file = e.target.files[0];
+        if (!file) { preview.innerHTML = ''; return; }
+        const url = URL.createObjectURL(file);
+        preview.innerHTML = `<img src="${url}" style="max-width:160px; max-height:160px; border-radius:8px; border:1px solid #ddd;">`;
+    }
+});
 
 async function fetchNovedadesEnviadas() {
     const container = document.getElementById("novedadesEnviadasList");
@@ -7374,6 +7432,7 @@ async function fetchNovedadesEnviadas() {
                         <b>${escapeHtml(n.titulo || '(Sin título)')}</b>
                         <span style="font-size:0.8em; color:#888;">${new Date(n.created_at).toLocaleString()}</span>
                     </div>
+                    ${n.imagen_url ? `<img src="${n.imagen_url}" style="max-width:220px; max-height:220px; border-radius:8px; margin:8px 0; border:1px solid #eee;">` : ''}
                     <p style="margin:6px 0; white-space:pre-line;">${escapeHtml(n.mensaje)}</p>
                     <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
                         <span style="font-size:0.85em; color:#3498db; font-weight:bold;">${etiqueta}</span>
@@ -7396,6 +7455,90 @@ async function eliminarNovedad(id) {
         fetchNovedadesEnviadas();
     } catch (err) {
         alert("Error al eliminar novedad: " + err.message);
+    }
+}
+
+
+// =========================================================
+// ============= BOLETÍN / CATÁLOGO MENSUAL (PDF) =============
+// Un solo PDF "vivo" a la vez (fila id=1 en boletin_mensual).
+// Al subir uno nuevo se PISA el archivo anterior (mismo path, upsert:true)
+// y se actualiza esa única fila, así los clientes siempre ven el último.
+// =========================================================
+
+const BOLETIN_STORAGE_PATH = 'boletin/boletin_mensual.pdf';
+
+async function fetchEstadoBoletin() {
+    const div = document.getElementById("boletinEstadoActual");
+    if (!div) return;
+    try {
+        const { data, error } = await supabase.from("boletin_mensual").select("*").eq("id", 1).maybeSingle();
+        if (error) throw error;
+
+        if (!data || !data.pdf_url) {
+            div.innerHTML = '⚪ No hay ningún boletín cargado todavía.';
+            return;
+        }
+
+        div.innerHTML = `🟢 Boletín actual: <b>${escapeHtml(data.nombre_archivo || 'boletin_mensual.pdf')}</b> — subido el ${new Date(data.updated_at).toLocaleString()}`;
+    } catch (err) {
+        div.innerHTML = 'Error al consultar el estado del boletín: ' + (err.message || err);
+    }
+}
+
+async function subirBoletinMensual() {
+    const input = document.getElementById("boletinPdfInput");
+    const archivo = input.files[0];
+
+    if (!archivo) {
+        alert("Elegí un archivo PDF primero.");
+        return;
+    }
+    if (archivo.type !== 'application/pdf') {
+        alert("El archivo tiene que ser un PDF.");
+        return;
+    }
+
+    try {
+        // upsert:true → pisa el PDF anterior automáticamente (mismo path fijo)
+        const { error: uploadError } = await supabase.storage
+            .from('documentos')
+            .upload(BOLETIN_STORAGE_PATH, archivo, { upsert: true, contentType: 'application/pdf' });
+        if (uploadError) throw uploadError;
+
+        const { data: publicData } = supabase.storage.from('documentos').getPublicUrl(BOLETIN_STORAGE_PATH);
+
+        const { error: dbError } = await supabase.from("boletin_mensual").upsert({
+            id: 1,
+            pdf_url: publicData.publicUrl,
+            nombre_archivo: archivo.name,
+            updated_at: new Date().toISOString()
+        });
+        if (dbError) throw dbError;
+
+        alert("✅ Boletín actualizado. Ya está disponible para todos los clientes.");
+        input.value = "";
+        fetchEstadoBoletin();
+    } catch (err) {
+        console.error("Error subiendo boletín:", err);
+        alert("Error al subir el boletín: " + (err.message || "Verificá que el bucket 'documentos' y la tabla 'boletin_mensual' existan en Supabase."));
+    }
+}
+
+async function quitarBoletinMensual() {
+    if (!confirm("¿Quitar el boletín actual? Los clientes ya no van a poder verlo.")) return;
+    try {
+        await supabase.storage.from('documentos').remove([BOLETIN_STORAGE_PATH]);
+        const { error } = await supabase.from("boletin_mensual").upsert({
+            id: 1,
+            pdf_url: null,
+            nombre_archivo: null,
+            updated_at: new Date().toISOString()
+        });
+        if (error) throw error;
+        fetchEstadoBoletin();
+    } catch (err) {
+        alert("Error al quitar el boletín: " + err.message);
     }
 }
 

@@ -942,6 +942,7 @@ button[onclick*="delete"] {
     <li><button class="tab-btn" data-tab="reporteVentas">Reporte de Ventas</button></li>
     <li><button class="tab-btn" data-tab="compras">Compras</button></li>
     <li><button class="tab-btn" data-tab="categorias">Categorías</button></li>
+    <li><button class="tab-btn" data-tab="tiposProducto">Tipos de Producto</button></li>
     <li><button class="tab-btn" data-tab="localidades">Localidades</button></li>
     <li><button class="tab-btn" data-tab="admin">Ingresos y Gastos</button></li>
   </ul>
@@ -1024,6 +1025,42 @@ button[onclick*="delete"] {
         </select>
 </div>
 
+<div style="margin-bottom:20px;">
+    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Filtrar por Tipo de Producto:</label>
+    <select id="promoTipoFilter" style="width: 100%; padding: 10px; border-radius: 6px;" onchange="handleTipoFilterChange()">
+        <option value="">Todos los tipos</option>
+        <option value="sin_tipo">Sin Tipo</option>
+    </select>
+</div>
+
+<div style="margin-bottom:20px; padding:15px; background:#fff8e1; border:1px solid #f0c419; border-radius:8px;">
+    <h4 style="margin-top:0; color:#7a5b00;">✅ Editar productos seleccionados (usá el check de cada tarjeta)</h4>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:10px; align-items:flex-end;">
+        <div>
+            <label style="font-size:11px; font-weight:bold;">Nueva Categoría (Marca):</label>
+            <select id="bulkAssignCategoria" style="width:100%; padding:8px; border-radius:6px;">
+                <option value="">No cambiar</option>
+                <option value="__none__">Quitar categoría</option>
+            </select>
+        </div>
+        <div>
+            <label style="font-size:11px; font-weight:bold;">Nuevo Tipo de Producto:</label>
+            <select id="bulkAssignTipo" style="width:100%; padding:8px; border-radius:6px;">
+                <option value="">No cambiar</option>
+                <option value="__none__">Quitar tipo</option>
+            </select>
+        </div>
+        <button type="button" onclick="aplicarCambioMasivoSeleccionados()" style="background:#f39c12; color:#fff; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor:pointer;">
+            Aplicar a seleccionados
+        </button>
+    </div>
+    <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button type="button" onclick="marcarTodosPromoCheckboxes(true)" style="font-size:12px; padding:4px 10px; border-radius:6px; border:1px solid #f0c419; background:#fff; cursor:pointer;">Marcar todos</button>
+        <button type="button" onclick="marcarTodosPromoCheckboxes(false)" style="font-size:12px; padding:4px 10px; border-radius:6px; border:1px solid #f0c419; background:#fff; cursor:pointer;">Desmarcar todos</button>
+        <span style="font-size:12px; color:#7a5b00;">Tip: destildá el check de los productos que <b>no</b> quieras modificar antes de aplicar.</span>
+    </div>
+</div>
+
 <div id="promoList" style="display:grid; gap:16px;">
         </div>
 
@@ -1049,6 +1086,13 @@ button[onclick*="delete"] {
     <label for="modalCategoria">Categoría actual:</label>
     <select id="modalCategoria" class="form-control">
         <option value="">Cargando categorías...</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="modalTipo">Tipo de producto:</label>
+    <select id="modalTipo" class="form-control">
+        <option value="">Cargando tipos...</option>
     </select>
 </div>
 
@@ -1081,6 +1125,17 @@ button[onclick*="delete"] {
   </button>
 
   <div id="categoriaList"></div>
+</section>         
+
+<section id="tiposProducto" class="section">
+  <h2 style="margin-bottom:15px;">Tipos de Producto</h2>
+
+  <button id="addTipoBtn"
+      style="padding:6px 12px;background:#2ecc71;color:#fff;border:none;border-radius:6px;margin-bottom:15px;">
+      ➕ Nuevo Tipo de Producto
+  </button>
+
+  <div id="tipoList"></div>
 </section>         
 
 
@@ -1379,6 +1434,13 @@ button[onclick*="delete"] {
             </div>
 
             <div>
+                <label style="display:block; font-size:14px; color:var(--text-muted);">Tipo de Producto</label>
+                <select id="newPromoTipo" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px;">
+                    <option value="">Sin tipo</option>
+                </select>
+            </div>
+
+            <div>
                 <label style="display:block; font-size:14px; color:var(--text-muted);">Imagen promocional</label>
                 <input type="file" id="newPromoImagen" accept="image/*" style="width:100%; padding:10px;">
             </div>
@@ -1667,6 +1729,12 @@ document.getElementById("addPromoBtn").addEventListener("click", async () => {
   const { data: categorias } = await supabase.from("categorias").select("id,nombre").order("nombre");
   const select = document.getElementById("newPromoCategoria");
   select.innerHTML = categorias.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+
+  // Cargar tipos de producto para el select (segunda clasificación)
+  const { data: tipos } = await supabase.from("tipos_producto").select("id,nombre").order("nombre");
+  const tipoSelect = document.getElementById("newPromoTipo");
+  tipoSelect.innerHTML = '<option value="">Sin tipo</option>' + (tipos || []).map(t => `<option value="${t.id}">${t.nombre}</option>`).join('');
+
   document.getElementById("addPromoModal").style.display = "block";
 });
 
@@ -1679,6 +1747,7 @@ async function guardarNuevaPromo() {
     const precioAnterior = parseFloat(document.getElementById('newPromoPrecioAnterior').value) || 0;
     const stock = parseInt(document.getElementById('newPromoStock').value) || 0;
     const categoriaId = document.getElementById('newPromoCategoria').value; 
+    const tipoId = document.getElementById('newPromoTipo').value || null;
     const imagenFile = document.getElementById('newPromoImagen').files[0];
 
     if (!nombre || isNaN(precio) || !imagenFile) {
@@ -1724,6 +1793,7 @@ async function guardarNuevaPromo() {
                     imagen_url: imageUrl,
                     imagen: fileName,
                     categoria_id: categoriaId,
+                    tipo_id: tipoId,
                     precio_anterior: precioAnterior 
                 }
             ]);
@@ -1741,6 +1811,7 @@ async function guardarNuevaPromo() {
         document.getElementById("newPromoPrecioAnterior").value = "";
         document.getElementById("newPromoStock").value = "";
         document.getElementById("newPromoImagen").value = "";
+        document.getElementById("newPromoTipo").value = "";
 
         if (typeof renderPromosByFilter === 'function') {
             const selectedIds = Array.from(document.querySelectorAll('.category-checkbox:checked')).map(cb => cb.value);
@@ -1830,6 +1901,7 @@ function abrirModalNuevaPromo() {
     document.getElementById('newPromoPrecioAnterior').value = "";
     document.getElementById('newPromoStock').value = "";
     document.getElementById('newPromoImagen').value = "";
+    document.getElementById('newPromoTipo').value = "";
     document.getElementById('addPromoModal').style.display = 'flex';
 }
 
@@ -1949,64 +2021,18 @@ async function verDetalleCtaCte(identificador) {
 
         if (error) throw error;
 
-        // 🆕 Traemos TAMBIÉN todos los pedidos del cliente (sin filtrar por saldo)
-        // para poder armar el historial completo de pagos: un pago puede
-        // pertenecer a un pedido que ya quedó totalmente saldado, y aun así
-        // tiene que figurar en el resumen de pagos cargados.
-        let queryTodos = supabase
-            .from('pedidos')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        if (/^\d+$/.test(String(identificador))) {
-            queryTodos = queryTodos.eq('dni', identificador);
-        } else {
-            queryTodos = queryTodos.eq('cliente', identificador);
+        if (!pedidos || pedidos.length === 0) {
+            return alert('No se encontraron pedidos pendientes.');
         }
-
-        const { data: todosLosPedidos, error: errorTodos } = await queryTodos;
-        if (errorTodos) throw errorTodos;
-
-        if ((!pedidos || pedidos.length === 0) && (!todosLosPedidos || todosLosPedidos.length === 0)) {
-            return alert('No se encontraron pedidos para este cliente.');
-        }
-
-        // 🆕 Armamos la lista plana de TODOS los pagos cargados a este cliente,
-        // juntando el array "pagos" de cada pedido, con la fecha, monto,
-        // método y (si es transferencia) a quién se transfirió.
-        const historialPagos = [];
-        (todosLosPedidos || []).forEach(p => {
-            const pagosArray = Array.isArray(p.pagos) ? p.pagos : [];
-            pagosArray.forEach(pg => {
-                historialPagos.push({
-                    pedidoId: p.id,
-                    fecha: pg.fecha || p.created_at,
-                    monto: Number(pg.monto || 0),
-                    metodo: pg.metodo || 'Sin especificar',
-                    destinatario: pg.destinatario || ''
-                });
-            });
-        });
-        // Más reciente primero
-        historialPagos.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
-
-        const totalPagadoHistorico = historialPagos.reduce((s, pg) => s + pg.monto, 0);
-
-        const nombreCliente = (pedidos && pedidos[0]) ? pedidos[0].cliente
-            : ((todosLosPedidos && todosLosPedidos[0]) ? todosLosPedidos[0].cliente : identificador);
 
         let deudaTotal = 0;
 
         let html = `
             <div style="max-height:70vh; overflow-y:auto; padding:10px;">
                 <h2 style="margin-top:0;">
-                    📋 Cuenta Corriente - ${nombreCliente}
+                    📋 Cuenta Corriente - ${pedidos[0].cliente}
                 </h2>
         `;
-
-        if (!pedidos || pedidos.length === 0) {
-            html += `<p style="color:#27ae60; font-weight:bold;">✅ Este cliente no tiene saldo pendiente.</p>`;
-        }
 
         pedidos.forEach(p => {
 
@@ -2043,57 +2069,6 @@ async function verDetalleCtaCte(identificador) {
                 </div>
             `;
         });
-
-        // 🆕 Sección: Historial de Pagos cargados a este cliente
-        html += `
-            <div style="margin-top:20px;">
-                <h3 style="margin-bottom:10px; color:#2c3e50;">💳 Historial de Pagos</h3>
-        `;
-
-        if (historialPagos.length === 0) {
-            html += `<p style="color:#888; font-size:0.9em;">Este cliente todavía no tiene pagos cargados.</p>`;
-        } else {
-            html += `
-                <table style="width:100%; border-collapse:collapse; font-size:13px; background:white; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
-                    <thead>
-                        <tr style="background:#f1f5f9;">
-                            <th style="padding:8px; text-align:left;">Fecha</th>
-                            <th style="padding:8px; text-align:left;">Pedido</th>
-                            <th style="padding:8px; text-align:right;">Monto</th>
-                            <th style="padding:8px; text-align:left;">Método</th>
-                            <th style="padding:8px; text-align:left;">Destinatario</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${historialPagos.map(pg => {
-                            const fechaFmt = /^\d{4}-\d{2}-\d{2}/.test(String(pg.fecha))
-                                ? new Date(pg.fecha + 'T00:00:00').toLocaleDateString('es-AR')
-                                : new Date(pg.fecha).toLocaleDateString('es-AR');
-                            const esTransferencia = String(pg.metodo).toLowerCase() === 'transferencia';
-                            const icono = esTransferencia ? '🏦' : '💵';
-                            return `
-                                <tr style="border-bottom:1px solid #f1f5f9;">
-                                    <td style="padding:8px;">${fechaFmt}</td>
-                                    <td style="padding:8px;">#${pg.pedidoId}</td>
-                                    <td style="padding:8px; text-align:right; color:#10b981; font-weight:bold;">$${pg.monto.toLocaleString('es-AR')}</td>
-                                    <td style="padding:8px;">${icono} ${safeText(pg.metodo)}</td>
-                                    <td style="padding:8px; color:#555;">${esTransferencia ? safeText(pg.destinatario || 'Sin especificar') : '—'}</td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                    <tfoot>
-                        <tr style="background:#f0fdf4; font-weight:bold;">
-                            <td colspan="2" style="padding:10px; text-align:right;">Total Pagado:</td>
-                            <td style="padding:10px; text-align:right; color:#10b981;">$${totalPagadoHistorico.toLocaleString('es-AR')}</td>
-                            <td colspan="2"></td>
-                        </tr>
-                    </tfoot>
-                </table>
-            `;
-        }
-
-        html += `</div>`;
 
         html += `
             <div style="
@@ -2227,12 +2202,8 @@ function abrirModalPagoCtaCte(identificador, nombre, saldoTotal) {
     document.getElementById('pagoCtaCteFecha').value = new Date().toLocaleDateString('sv-SE');
 }
 
-let isSavingPagoCtaCte = false; // Bloqueo para evitar pagos duplicados por doble clic
-
 async function confirmarPagoCtaCte() {
     if (!clienteCtaCteActual) return;
-    if (isSavingPagoCtaCte) return; // Ya hay un guardado en curso, ignoramos el clic extra
-    isSavingPagoCtaCte = true;
 
     const montoInput = document.getElementById('pagoCtaCteMonto');
     const fechaInput = document.getElementById('pagoCtaCteFecha');
@@ -2245,10 +2216,7 @@ async function confirmarPagoCtaCte() {
     const fechaRaw = fechaInput.value || new Date().toISOString();
     const fecha = fechaRaw.substring(0, 10);
 
-    if (!montoRestante || montoRestante <= 0) {
-        isSavingPagoCtaCte = false;
-        return alert("Ingresa un monto valido.");
-    }
+    if (!montoRestante || montoRestante <= 0) return alert("Ingresa un monto valido.");
 
     const { identificador } = clienteCtaCteActual;
 
@@ -2335,8 +2303,6 @@ async function confirmarPagoCtaCte() {
     } catch (err) {
         console.error(err);
         alert("Error al guardar el pago: " + err.message);
-    } finally {
-        isSavingPagoCtaCte = false;
     }
 }
 
@@ -2398,6 +2364,47 @@ function populateCategoriaSelect(selectedCategoryId) {
     });
 }
 
+
+// ================= TIPOS DE PRODUCTO (segunda clasificación) =================
+
+let availableTipos = [];
+
+// --- Carga todos los tipos de producto disponibles ---
+async function fetchAvailableTipos() {
+    try {
+        const { data: tipos = [], error } = await supabase
+            .from("tipos_producto")
+            .select("id, nombre")
+            .order("nombre", { ascending: true });
+
+        if (error) throw error;
+
+        availableTipos = tipos;
+
+    } catch (err) {
+        console.error('Error cargando tipos de producto disponibles:', err);
+    }
+}
+
+// --- Llena el <select> de tipo en el modal de edición ---
+function populateTipoSelect(selectedTipoId) {
+    const select = document.getElementById('modalTipo');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">Sin tipo</option>';
+
+    availableTipos.forEach(tipo => {
+        const option = document.createElement('option');
+        option.value = tipo.id;
+        option.textContent = tipo.nombre;
+
+        if (tipo.id == selectedTipoId) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+}
+
 /**
  * Función auxiliar para obtener el valor de un elemento de forma segura.
  * Si el elemento no existe (es null), retorna null.
@@ -2444,6 +2451,15 @@ async function savePromotionChanges() {
         newCategoriaId = categoriaElement.value;
         // Si el valor es una cadena vacía (opción por defecto sin valor), lo establecemos a null.
         if (newCategoriaId === "") newCategoriaId = null;
+    }
+
+    // Lógica para Tipo de Producto (segunda clasificación, igual que Categoría)
+    const tipoElement = document.getElementById('modalTipo');
+    let newTipoId = null;
+
+    if (tipoElement) {
+        newTipoId = tipoElement.value;
+        if (newTipoId === "") newTipoId = null;
     }
     
     // ================= 2. VALIDACIÓN Y PARSEO =================
@@ -2504,7 +2520,8 @@ async function savePromotionChanges() {
                 precio_anterior: isNaN(newPrecioAnterior) || newPrecioAnterior === 0 ? null : newPrecioAnterior, 
                 stock: newStock,
                 imagen: newImageName,
-                categoria_id: newCategoriaId // ¡Campo corregido!
+                categoria_id: newCategoriaId, // ¡Campo corregido!
+                tipo_id: newTipoId
             })
             .eq('id', promoId);
 
@@ -2625,12 +2642,17 @@ function activateSection(tab) {
     switch (tab) {
         case 'promos':
             cargarCategoriasEnSelects();
+            cargarTiposEnFiltroPromos();
+            cargarSelectsAsignacionMasiva();
             break;
         case 'pedidos':
             if (typeof fetchOrders === 'function') fetchOrders();
             break;
         case 'categorias':
             if (typeof fetchCategorias === 'function') fetchCategorias();
+            break;
+        case 'tiposProducto':
+            if (typeof fetchTiposProducto === 'function') fetchTiposProducto();
             break;
         case 'clienteTienda':
             if (typeof cargarTiendaCliente === 'function') cargarTiendaCliente();
@@ -2857,6 +2879,12 @@ async function openEditModal(promoId) {
         // 3. 🎯 CORRECCIÓN: Llenar el <select> y seleccionar la opción actual
         // Reemplazamos 'loadCategoriesIntoModal' por su función 'populateCategoriaSelect'.
         populateCategoriaSelect(promo.categoria_id); 
+
+        // 3b. Llenar el <select> de Tipo de Producto (segunda clasificación)
+        if (availableTipos.length === 0) {
+            await fetchAvailableTipos();
+        }
+        populateTipoSelect(promo.tipo_id);
         
         // Ya no necesita este código, pues populateCategoriaSelect ya selecciona el valor
         /*
@@ -3037,7 +3065,171 @@ async function handlePromoFilterChange() {
     await renderPromosByFilter(filterArray);
 }
 
+// ================= FILTRO POR TIPO DE PRODUCTO (segunda clasificación) =================
+
+let currentTipoFilter = '';       // '' = todos, 'sin_tipo' = sin tipo, o el id del tipo
+let lastCategoryFilterIds = [''];  // recuerda la última selección de categoría para poder combinarla con el filtro de tipo
+
+// Llena el <select> de filtro por tipo en la pestaña Promociones
+function fillPromoTipoFilterSelect(tipos) {
+    const select = document.getElementById('promoTipoFilter');
+    if (!select) return;
+
+    const valorActual = select.value;
+
+    select.innerHTML = `
+        <option value="">Todos los tipos</option>
+        <option value="sin_tipo">Sin Tipo</option>
+    `;
+
+    (tipos || []).forEach(tipo => {
+        const option = document.createElement('option');
+        option.value = tipo.id;
+        option.textContent = tipo.nombre;
+        select.appendChild(option);
+    });
+
+    // Restauramos la selección previa si sigue existiendo
+    if ([...select.options].some(o => o.value === valorActual)) {
+        select.value = valorActual;
+    }
+}
+
+// Carga los tipos de producto para el select de filtro (se llama al entrar a la pestaña Promociones)
+async function cargarTiposEnFiltroPromos() {
+    try {
+        const { data: tipos = [], error } = await supabase
+            .from('tipos_producto')
+            .select('id, nombre')
+            .order('nombre', { ascending: true });
+
+        if (error) throw error;
+
+        availableTipos = tipos;
+        fillPromoTipoFilterSelect(tipos);
+    } catch (err) {
+        console.error('Error cargando tipos de producto para el filtro:', err);
+    }
+}
+
+// Se ejecuta cuando el usuario cambia el filtro de tipo
+async function handleTipoFilterChange() {
+    currentTipoFilter = document.getElementById('promoTipoFilter').value;
+    await renderPromosByFilter(lastCategoryFilterIds);
+}
+
+
+// ================= EDICIÓN MASIVA DE PRODUCTOS SELECCIONADOS (checkboxes) =================
+
+// Carga las opciones de Categoría y Tipo en los selects de la barra "Editar seleccionados"
+async function cargarSelectsAsignacionMasiva() {
+    try {
+        const { data: categorias = [], error: catError } = await supabase
+            .from('categorias')
+            .select('id, nombre')
+            .order('nombre', { ascending: true });
+        if (catError) throw catError;
+
+        const catSelect = document.getElementById('bulkAssignCategoria');
+        if (catSelect) {
+            catSelect.innerHTML = `
+                <option value="">No cambiar</option>
+                <option value="__none__">Quitar categoría</option>
+            ` + categorias.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+        }
+
+        const { data: tipos = [], error: tipoError } = await supabase
+            .from('tipos_producto')
+            .select('id, nombre')
+            .order('nombre', { ascending: true });
+        if (tipoError) throw tipoError;
+
+        const tipoSelect = document.getElementById('bulkAssignTipo');
+        if (tipoSelect) {
+            tipoSelect.innerHTML = `
+                <option value="">No cambiar</option>
+                <option value="__none__">Quitar tipo</option>
+            ` + tipos.map(t => `<option value="${t.id}">${t.nombre}</option>`).join('');
+        }
+    } catch (err) {
+        console.error('Error cargando selects de asignación masiva:', err);
+    }
+}
+
+// Marca o desmarca de un solo click todos los checkboxes de productos visibles
+function marcarTodosPromoCheckboxes(marcar) {
+    document.querySelectorAll('.promo-select').forEach(cb => { cb.checked = marcar; });
+}
+
+// Aplica la Categoría y/o el Tipo elegidos a todos los productos tildados
+async function aplicarCambioMasivoSeleccionados() {
+    const selectedIds = Array.from(document.querySelectorAll('.promo-select:checked'))
+        .map(cb => parseInt(cb.dataset.promoId, 10))
+        .filter(id => !isNaN(id));
+
+    if (!selectedIds.length) {
+        alert('Primero marcá el check de los productos que querés modificar.');
+        return;
+    }
+
+    const catSelect = document.getElementById('bulkAssignCategoria');
+    const tipoSelect = document.getElementById('bulkAssignTipo');
+    const catValue = catSelect ? catSelect.value : '';
+    const tipoValue = tipoSelect ? tipoSelect.value : '';
+
+    if (catValue === '' && tipoValue === '') {
+        alert('Elegí una nueva Categoría y/o un nuevo Tipo de Producto para aplicar.');
+        return;
+    }
+
+    const updateObj = {};
+    const resumenCambios = [];
+
+    if (catValue !== '') {
+        updateObj.categoria_id = (catValue === '__none__') ? null : catValue;
+        resumenCambios.push(catValue === '__none__' ? 'quitar la categoría' : 'cambiar la categoría');
+    }
+    if (tipoValue !== '') {
+        updateObj.tipo_id = (tipoValue === '__none__') ? null : tipoValue;
+        resumenCambios.push(tipoValue === '__none__' ? 'quitar el tipo' : 'cambiar el tipo');
+    }
+
+    const confirmado = confirm(
+        `Vas a ${resumenCambios.join(' y ')} de ${selectedIds.length} producto(s) seleccionado(s).\n¿Confirmás?`
+    );
+    if (!confirmado) return;
+
+    try {
+        const { error } = await supabase
+            .from('promociones')
+            .update(updateObj)
+            .in('id', selectedIds);
+
+        if (error) throw error;
+
+        alert(`✅ Se actualizaron ${selectedIds.length} producto(s) correctamente.`);
+
+        // Refrescar la lista manteniendo el filtro de categoría/tipo actual
+        if (typeof renderPromosByFilter === 'function') {
+            await renderPromosByFilter(lastCategoryFilterIds);
+        } else {
+            location.reload();
+        }
+
+        // Reseteamos los selects de la barra a "No cambiar"
+        if (catSelect) catSelect.value = '';
+        if (tipoSelect) tipoSelect.value = '';
+
+    } catch (err) {
+        console.error('Error al aplicar cambios masivos:', err);
+        alert('Error al aplicar los cambios: ' + (err.message || 'Error desconocido'));
+    }
+}
+
 async function renderPromosByFilter(categoryIds = []) {
+    // Recordamos la última selección de categoría para poder reaplicarla si cambia el filtro de tipo
+    lastCategoryFilterIds = categoryIds;
+
     const container = document.getElementById('promoList');
     if (!container) return;
 
@@ -3099,11 +3291,22 @@ async function renderPromosByFilter(categoryIds = []) {
     }
 
     // 6. Ejecución de la consulta a Supabase
-    const { data: promos = [], error: promoError } = await query;
+    const { data: promosRaw = [], error: promoError } = await query;
     if (promoError) {
         console.error("Error al obtener promociones:", promoError);
         container.innerHTML = '<p style="padding: 20px; color: red;">Error al conectar con la base de datos.</p>';
         return;
+    }
+
+    // 6b. Filtro adicional por Tipo de Producto (segunda clasificación, se aplica en el cliente)
+    let promos = promosRaw;
+    if (currentTipoFilter === 'sin_tipo') {
+        promos = promosRaw.filter(p => !p.tipo_id);
+        categoryName += ' — Sin Tipo';
+    } else if (currentTipoFilter) {
+        promos = promosRaw.filter(p => String(p.tipo_id) === String(currentTipoFilter));
+        const tipoSeleccionado = availableTipos.find(t => String(t.id) === String(currentTipoFilter));
+        if (tipoSeleccionado) categoryName += ` — Tipo: ${tipoSeleccionado.nombre}`;
     }
     
     container.innerHTML = ''; 
@@ -3208,6 +3411,10 @@ async function renderPromosByFilter(categoryIds = []) {
                 <b>${safeText(p.nombre || '')}</b>
             </div>
 
+            <div style="text-align:center; margin-top:2px; font-size:0.75em; color:#999;">
+                ID: ${p.id}
+            </div>
+
             <div style="text-align:center; margin-top:4px;">
                 ${
                     p.precio_anterior && Number(p.precio_anterior) > Number(p.precio)
@@ -3220,6 +3427,13 @@ async function renderPromosByFilter(categoryIds = []) {
             <div style="text-align:center; margin-top:4px; font-size:0.9em; color:${p.stock <= 5 ? 'red' : '#333'};">
                 Stock: <b>${p.stock !== null && p.stock !== undefined ? p.stock : 'N/A'}</b>
             </div>
+
+            ${(() => {
+                const tipoProducto = availableTipos.find(t => String(t.id) === String(p.tipo_id));
+                return tipoProducto
+                    ? `<div style="text-align:center; margin-top:4px; font-size:0.8em; color:#666;">🏷️ ${safeText(tipoProducto.nombre)}</div>`
+                    : '';
+            })()}
         `;
 
         // Insertar imagen de forma segura al inicio
@@ -4635,24 +4849,13 @@ function renderPedidosTotales(pedidos) {
     const totalesPorDia = {}; // Objeto para agrupar
 
     pedidos.filter(p => !p.archivado).forEach(p => {
+        // Extraer fecha en formato DD/MM/AAAA
+        const fecha = p.created_at ? new Date(p.created_at).toLocaleDateString('es-AR') : 'Sin Fecha';
+        
+        if (!totalesPorDia[fecha]) totalesPorDia[fecha] = { ef: 0, tr: 0 };
+
         if (p.pagos && Array.isArray(p.pagos)) {
             p.pagos.forEach(pago => {
-                // 🛠️ Usamos la fecha propia del pago (pago.fecha) en vez de la fecha
-                // de creación del pedido (p.created_at). Esto es clave para Cuenta
-                // Corriente: un pago puede registrarse días/semanas después de creado
-                // el pedido, y antes se agrupaba igual bajo la fecha del pedido,
-                // haciendo que "desapareciera" al filtrar movimientos por fecha real.
-                let fecha;
-                if (pago.fecha) {
-                    // pago.fecha viene como 'YYYY-MM-DD' -> lo pasamos a DD/MM/AAAA
-                    const [y, m, d] = pago.fecha.split('-');
-                    fecha = (y && m && d) ? `${d}/${m}/${y}` : pago.fecha;
-                } else {
-                    fecha = p.created_at ? new Date(p.created_at).toLocaleDateString('es-AR') : 'Sin Fecha';
-                }
-
-                if (!totalesPorDia[fecha]) totalesPorDia[fecha] = { ef: 0, tr: 0 };
-
                 if (pago.metodo === 'Efectivo') {
                     totalEfectivo += pago.monto;
                     totalesPorDia[fecha].ef += pago.monto;
@@ -5424,34 +5627,17 @@ async function cargarReporteIngresos() {
     // 'pedidos_por_rango', que no existe en la base). El filtrado por
     // fecha de pago se hace igual que antes, del lado del cliente,
     // recorriendo el array 'pagos' de cada pedido.
-    //
-    // 🛠️ IMPORTANTE: Supabase/PostgREST devuelve como máximo 1000 filas por
-    // consulta aunque no se lo pidas explícitamente. Si hay más de 1000
-    // pedidos cargados, un solo select() se queda corto y "pierde" pedidos
-    // viejos (y sus pagos) sin avisar con ningún error. Por eso paginamos
-    // con .range() hasta traer la tabla completa.
-    let pedidos = [];
-    const TAMANIO_PAGINA = 1000;
-    let desdeFila = 0;
-    while (true) {
-        const { data: bloque, error } = await supabase
-            .from('pedidos')
-            .select('cliente, pagos')
-            .range(desdeFila, desdeFila + TAMANIO_PAGINA - 1);
+    const { data, error } = await supabase
+        .from('pedidos')
+        .select('cliente, pagos');
 
-        if (error) {
-            console.error("Error al cargar pedidos:", error);
-            alert("Error al cargar los ingresos: " + error.message);
-            return;
-        }
-
-        if (!bloque || bloque.length === 0) break;
-
-        pedidos = pedidos.concat(bloque);
-
-        if (bloque.length < TAMANIO_PAGINA) break; // Ya trajimos todo
-        desdeFila += TAMANIO_PAGINA;
+    if (error) {
+        console.error("Error al cargar pedidos:", error);
+        alert("Error al cargar los ingresos: " + error.message);
+        return;
     }
+
+    const pedidos = Array.isArray(data) ? data : [];
 
     let efec = 0;
     let trans = 0;
@@ -6118,6 +6304,7 @@ setTimeout(() => {
                 <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding:10px 0;">
                     <div style="display:flex; flex-direction:column;">
                         <span style="font-weight:600; font-size:14px;">${safeText(p.nombre)}</span>
+                        <span style="font-size:11px; color:#999;">ID: ${p.id}</span>
                         <span style="font-size:12px; color:#3498db;">$${p.precio} | Stock: ${p.stock ?? 0}</span>
                     </div>
                     <button class="addProdBtn" data-id="${p.id}" style="background:#2ecc71; color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:12px; font-weight:bold;">+ Add</button>
@@ -6864,6 +7051,217 @@ async function updateCategoria(id) {
     } catch (err) {
         console.error("Error al actualizar categoría:", err);
         alert("Error al actualizar categoría: " + (err.message || 'Error desconocido'));
+    }
+}
+
+
+
+// ================= TIPOS DE PRODUCTO (gestión CRUD, igual que Categorías) =================
+
+async function fetchTiposProducto() {
+    try {
+        const { data: tipos = [], error: tipoError } = await supabase
+            .from("tipos_producto")
+            .select("*")
+            .order("nombre", { ascending: true });
+
+        if (tipoError) throw tipoError;
+
+        const container = document.getElementById('tipoList');
+
+        if (!container) {
+            console.warn("Elemento 'tipoList' no encontrado. Asegúrate de que la pestaña de tipos de producto esté activa.");
+            return;
+        }
+
+        container.innerHTML = '';
+
+        for (const tipo of tipos) {
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.dataset.tipoId = tipo.id;
+
+            const info = document.createElement('div');
+            info.className = 'card-info';
+            info.style = 'font-size: 14px; color: #555; font-weight: normal;';
+            info.textContent = tipo.nombre;
+
+            const actions = document.createElement('div');
+            actions.className = 'card-actions';
+
+            const editBtn = document.createElement('button');
+            editBtn.textContent = '✏️';
+            editBtn.addEventListener('click', () => editTipo(tipo.id, tipo.nombre));
+
+            const delBtn = document.createElement('button');
+            delBtn.textContent = '🗑️';
+            delBtn.addEventListener('click', () => deleteTipo(tipo.id));
+
+            actions.appendChild(editBtn);
+            actions.appendChild(delBtn);
+
+            div.appendChild(info);
+            div.appendChild(actions);
+            container.appendChild(div);
+        }
+
+        // Refrescamos también el caché usado en el filtro de la sección Promociones
+        availableTipos = tipos;
+        if (typeof fillPromoTipoFilterSelect === 'function') fillPromoTipoFilterSelect(tipos);
+
+    } catch (err) {
+        console.error('fetchTiposProducto error', err.message || err);
+        showToast ? showToast('Error cargando tipos de producto.', 3000) : alert('Error cargando tipos de producto: ' + (err.message || err));
+    }
+}
+
+
+// ================= AGREGAR NUEVO TIPO DE PRODUCTO =================
+
+document.getElementById("addTipoBtn")?.addEventListener("click", () => {
+    const nombre = prompt("Ingrese el nombre del nuevo tipo de producto (ej: Nutrición, Serum, Shampoo):");
+
+    if (nombre && nombre.trim() !== "") {
+        guardarNuevoTipo(nombre.trim());
+    } else {
+        alert("Debes ingresar un nombre válido para el tipo de producto.");
+    }
+});
+
+
+async function guardarNuevoTipo(nombre) {
+    try {
+        const { error } = await supabase
+            .from("tipos_producto")
+            .insert([{ nombre }]);
+
+        if (error) throw error;
+
+        alert("✅ Tipo de producto agregado correctamente");
+        fetchTiposProducto();
+    } catch (err) {
+        alert("Error al agregar tipo de producto: " + err.message);
+    }
+}
+
+
+// ----------------- EDITAR TIPO DE PRODUCTO -----------------
+function editTipo(id, nombre) {
+    const nombreSeguro = escapeHtml(nombre);
+
+    const modalHtml = `
+        <div style="padding: 18px 12px; width: 100%;">
+            <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 18px; color: #333;">
+                Editar tipo de producto
+            </h3>
+
+            <div style="display: flex; gap: 10px; align-items: center; width: 100%;">
+                <input 
+                    id="editTipoInput" 
+                    type="text" 
+                    value="${nombreSeguro}" 
+                    placeholder="Escriba el nuevo nombre"
+                    style="
+                        flex-grow: 1; 
+                        padding: 10px 16px;
+                        border-radius: 8px;
+                        border: 1px solid #ccc;
+                        font-size: 16px;
+                    "
+                >
+                <button 
+                    onclick="updateTipo(${id})" 
+                    style="
+                        background: #3498db;
+                        color: #fff;
+                        border: none;
+                        padding: 10px 18px;
+                        border-radius: 8px;
+                        font-weight: bold;
+                        font-size: 16px;
+                        cursor: pointer;
+                        white-space: nowrap;
+                    "
+                >
+                    Guardar
+                </button>
+            </div>
+        </div>
+    `;
+
+    openModal(modalHtml);
+
+    setTimeout(() => {
+        document.getElementById('editTipoInput')?.focus();
+    }, 150);
+}
+
+
+// ================= ELIMINAR TIPO DE PRODUCTO =================
+
+async function deleteTipo(id) {
+    if (!confirm("¿Seguro que querés eliminar este tipo de producto?")) return;
+
+    try {
+        // verificar si hay productos usando ese tipo
+        const { data: productosRelacionados, error: checkError } = await supabase
+            .from("promociones")
+            .select("id, nombre")
+            .eq("tipo_id", id);
+
+        if (checkError) throw checkError;
+
+        if (productosRelacionados.length > 0) {
+            alert(`⚠️ No se puede eliminar este tipo porque está asociado a ${productosRelacionados.length} producto(s).`);
+            return;
+        }
+
+        const { error } = await supabase.from("tipos_producto").delete().eq("id", id);
+        if (error) throw error;
+
+        alert("✅ Tipo de producto eliminado correctamente");
+        fetchTiposProducto();
+    } catch (err) {
+        alert("Error al eliminar tipo de producto: " + err.message);
+    }
+}
+
+
+// ================= ACTUALIZAR TIPO DE PRODUCTO =================
+
+async function updateTipo(id) {
+    const inputElement = document.getElementById("editTipoInput");
+    if (!inputElement) {
+        return console.error("No se encontró el campo de edición (#editTipoInput).");
+    }
+
+    const nuevoNombre = inputElement.value.trim();
+
+    if (!nuevoNombre) {
+        alert("El nombre del tipo de producto no puede estar vacío.");
+        return;
+    }
+
+    try {
+        if (typeof closeModal === 'function') {
+            closeModal();
+        } else {
+            console.warn("Función closeModal() no definida. El modal debe cerrarse manualmente.");
+        }
+
+        const { error } = await supabase
+            .from("tipos_producto")
+            .update({ nombre: nuevoNombre })
+            .eq("id", id);
+
+        if (error) throw error;
+
+        alert("✅ Tipo de producto actualizado correctamente.");
+        fetchTiposProducto();
+
+    } catch (err) {
+        console.error("Error al actualizar tipo de producto:", err);
+        alert("Error al actualizar tipo de producto: " + (err.message || 'Error desconocido'));
     }
 }
 
@@ -7959,11 +8357,7 @@ function toggleDestinatarioCC(val) {
 }
 
 
-let isSavingNuevoPagoCC = false; // Bloqueo para evitar pagos duplicados por doble clic
-
 async function guardarNuevoPagoCC() {
-    if (isSavingNuevoPagoCC) return;
-
     const montoInput = document.getElementById('newPagoMonto');
     const metodoInput = document.getElementById('newPagoMetodoUnico');
     const fechaInput = document.getElementById('newPagoFecha'); 
@@ -7980,7 +8374,6 @@ async function guardarNuevoPagoCC() {
 
     if (!monto || monto <= 0) return alert("Ingresa un monto válido.");
 
-    isSavingNuevoPagoCC = true;
     try {
         let historialActual = [];
         if (pedidoSeleccionado.pagos) {
@@ -8026,8 +8419,6 @@ async function guardarNuevoPagoCC() {
 
     } catch (err) {
         alert("Error al guardar: " + err.message);
-    } finally {
-        isSavingNuevoPagoCC = false;
     }
 }
 

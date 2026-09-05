@@ -1037,6 +1037,16 @@ button[onclick*="delete"] {
     </select>
 </div>
 
+<div style="text-align:right; margin: -12px 0 14px 0;">
+    <button type="button" onclick="abrirModalResetStock()" title="Poner en 0 el stock de una categoría"
+        style="background:none; border:none; padding:2px 4px; font-size:10px; color:#ccc; cursor:pointer; opacity:0.5;"
+        onmouseover="this.style.opacity='1'; this.style.color='#e74c3c';"
+        onmouseout="this.style.opacity='0.5'; this.style.color='#ccc';">
+        ⚙
+    </button>
+</div>
+
+
 <div style="margin-bottom:20px; padding:15px; background:#fff8e1; border:1px solid #f0c419; border-radius:8px;">
     <h4 style="margin-top:0; color:#7a5b00;">✅ Editar productos seleccionados (usá el check de cada tarjeta)</h4>
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:10px; align-items:flex-end;">
@@ -1365,12 +1375,6 @@ button[onclick*="delete"] {
         </table>
     </div>
 </section>
-
-
-<div id="imageModal" 
-     style="display:none; position:fixed; z-index:9999; top:0; left:0; width:100%; height:100%;
-
-
 
 
 <div id="categoriasContainer" class="section">
@@ -3401,6 +3405,14 @@ async function renderPromosByFilter(categoryIds = []) {
     catTitle.style.borderBottom = "1px solid #333";
     catTitle.style.fontSize = "18px";
     container.appendChild(catTitle);
+
+    // 7b. Total de existencias (stock) sumando todos los productos que componen
+    // la selección actual (respeta el filtro de categoría/tipo aplicado arriba).
+    const stockTotalCategoria = promos.reduce((acc, p) => acc + (parseInt(p.stock, 10) || 0), 0);
+    const stockTotalEl = document.createElement('div');
+    stockTotalEl.style.cssText = 'margin:8px 0 12px 0; font-weight:bold; font-size:0.95em; color:#2c3e50;';
+    stockTotalEl.textContent = `📦 Stock total de la selección: ${stockTotalCategoria}`;
+    container.appendChild(stockTotalEl);
     
     // 8. Barra de Progreso dinámica con ID único
     const progressBarContainer = document.createElement('div');
@@ -8123,7 +8135,9 @@ async function fetchSalesData() {
     fillVentasCategoriaFilter();
 
     // 2. Armar rango de fechas (filtra por fecha de pedido, no por estado activo/archivado)
-    let query = supabase.from('pedidos').select('productos, created_at');
+    // Se agrega "cliente", "dni" e "id" para poder mostrar luego, por producto,
+    // a qué clientes se les vendió dentro del rango de fechas filtrado.
+    let query = supabase.from('pedidos').select('id, productos, created_at, cliente, dni');
 
     if (desde) {
         query = query.gte('created_at', new Date(desde + 'T00:00:00').toISOString());
@@ -8153,6 +8167,11 @@ async function fetchSalesData() {
     const salesMap = new Map();
     const nombresHistoricos = new Map();
 
+    // Mapa producto -> [{cliente, dni, cantidad, fecha, pedidoId}, ...]
+    // Se usa para el modal "¿A qué clientes se le vendió este producto?"
+    // dentro del rango de fechas actualmente filtrado.
+    const clientesPorProducto = new Map();
+
     orders.forEach(order => {
         if (order.productos && Array.isArray(order.productos)) {
             order.productos.forEach(product => {
@@ -8167,10 +8186,25 @@ async function fetchSalesData() {
                     if (product.nombre && !nombresHistoricos.has(prodId)) {
                         nombresHistoricos.set(prodId, product.nombre);
                     }
+
+                    // Registramos la venta de este producto a este cliente/pedido
+                    const key = String(prodId);
+                    if (!clientesPorProducto.has(key)) clientesPorProducto.set(key, []);
+                    clientesPorProducto.get(key).push({
+                        cliente: order.cliente || 'Sin nombre',
+                        dni: order.dni || '',
+                        cantidad: qty,
+                        fecha: order.created_at,
+                        pedidoId: order.id,
+                    });
                 }
             });
         }
     });
+
+    // Guardamos el mapa globalmente para que el modal de detalle por cliente
+    // pueda consultarlo sin volver a pedir datos a Supabase.
+    window.salesReportClientsMap = clientesPorProducto;
 
     // 4. Mapear los datos de ventas con nombre, stock, categoría e ID (para filtrar luego)
     const reportData = [];
@@ -8317,9 +8351,14 @@ function renderSalesReportTable(container, data) {
             <tbody>
     `;
     
+    // Guardamos el set exacto de filas mostradas para poder recuperarlas por
+    // índice desde el onclick (evita insertar texto libre dentro de un atributo
+    // HTML, que rompía la página si el nombre del producto tenía comillas).
+    window.salesReportRenderedRows = data;
+
     let currentCategory = '';
     
-    data.forEach(item => {
+    data.forEach((item, idx) => {
         const isLowStock = item.stock !== 'N/A' && item.stock < item.vendido;
 
         // 1. Fila de Encabezado de Categoría (si la categoría cambia)
@@ -8331,16 +8370,25 @@ function renderSalesReportTable(container, data) {
             html += `
                 <tr>
                     <td colspan="3" style="background: #eaf3f8; font-weight: bold; padding: 8px 10px; border-top: 2px solid #3498db; color: #2c3e50;">
-                        Categoría: ${currentCategory}
+                        Categoría: ${safeText(currentCategory)}
                     </td>
                 </tr>
             `;
         }
 
-        // 2. Fila de Producto
+        // 2. Fila de Producto (el nombre es clickeable: abre modal con los
+        // clientes a quienes se les vendió este producto en la fecha filtrada).
+        // Se pasa solo el índice (número) al onclick para no romper el HTML
+        // si el nombre del producto contiene comillas u otros caracteres.
         html += `
             <tr>
-                <td>${item.nombre}</td>
+                <td>
+                    <span onclick="mostrarClientesProducto(${idx})"
+                          style="cursor:pointer; color:#2980b9; text-decoration:underline;"
+                          title="Ver a qué clientes se les vendió">
+                        ${safeText(item.nombre)}
+                    </span>
+                </td>
                 <td style="text-align:center;">${item.vendido}</td>
                 <td style="text-align:center; color:${isLowStock ? '#ff4d4f' : '#2ecc71'};">${item.stock}</td>
             </tr>
@@ -8357,6 +8405,100 @@ function renderSalesReportTable(container, data) {
 }
 
 
+/**
+ * Muestra, en un modal, el listado de clientes a quienes se les vendió un
+ * producto en particular, dentro del rango de fechas actualmente filtrado
+ * en el Reporte de Ventas (respeta "Desde"/"Hasta" ya que window.salesReportClientsMap
+ * se construye a partir de los mismos pedidos que arman la tabla).
+ *
+ * Recibe el índice de la fila (dentro de window.salesReportRenderedRows) en
+ * lugar del nombre/id del producto directamente, para no tener que insertar
+ * texto libre (que puede traer comillas) dentro de un atributo HTML.
+ */
+function mostrarClientesProducto(idx) {
+    const fila = (window.salesReportRenderedRows || [])[idx];
+    if (!fila) return;
+    const prodId = fila.id;
+    const nombreProducto = fila.nombre;
+
+    const mapa = window.salesReportClientsMap;
+    const ventas = (mapa && mapa.get(String(prodId))) || [];
+
+    const desdeVal = document.getElementById('ventasDesde')?.value;
+    const hastaVal = document.getElementById('ventasHasta')?.value;
+    const rangoTexto = (desdeVal || hastaVal)
+        ? `Del ${desdeVal || '—'} al ${hastaVal || '—'}`
+        : 'Sin filtro de fecha (todos los pedidos)';
+
+    if (ventas.length === 0) {
+        openModal(`
+            <h3 style="margin-top:0;">🧾 ${safeText(nombreProducto)}</h3>
+            <p style="color:#777; font-size:0.85em; margin-top:-8px;">${safeText(rangoTexto)}</p>
+            <p>No se encontraron ventas registradas para este producto en el rango seleccionado.</p>
+            <button onclick="closeModal()" style="margin-top:10px; width:100%; border:none; padding:10px; cursor:pointer; background:#e2e8f0; border-radius:6px;">Cerrar</button>
+        `);
+        return;
+    }
+
+    // Agrupamos por cliente (usando DNI si existe, sino el nombre) sumando
+    // las cantidades por si el mismo cliente compró el producto en más de un pedido.
+    const porCliente = new Map();
+    ventas.forEach(v => {
+        const key = v.dni ? `dni:${v.dni}` : `nombre:${v.cliente}`;
+        if (!porCliente.has(key)) {
+            porCliente.set(key, { cliente: v.cliente, dni: v.dni, total: 0, detalles: [] });
+        }
+        const entry = porCliente.get(key);
+        entry.total += v.cantidad;
+        entry.detalles.push(v);
+    });
+
+    // Ordenamos de mayor a menor cantidad comprada
+    const listaClientes = Array.from(porCliente.values()).sort((a, b) => b.total - a.total);
+
+    const totalVendido = listaClientes.reduce((acc, c) => acc + c.total, 0);
+
+    let filasHtml = listaClientes.map(c => {
+        const fechas = c.detalles
+            .map(d => {
+                let fechaTxt = '';
+                try { fechaTxt = new Date(d.fecha).toLocaleDateString('es-AR'); } catch (e) { fechaTxt = d.fecha || ''; }
+                return `${fechaTxt} (x${d.cantidad})`;
+            })
+            .join(', ');
+
+        return `
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:8px 6px;">
+                    <b>${safeText(c.cliente)}</b>
+                    ${c.dni ? `<br><span style="font-size:0.8em; color:#888;">DNI: ${safeText(c.dni)}</span>` : ''}
+                </td>
+                <td style="padding:8px 6px; text-align:center; font-weight:bold;">${c.total}</td>
+                <td style="padding:8px 6px; font-size:0.8em; color:#666;">${safeText(fechas)}</td>
+            </tr>
+        `;
+    }).join('');
+
+    openModal(`
+        <h3 style="margin-top:0;">🧾 ${safeText(nombreProducto)}</h3>
+        <p style="color:#777; font-size:0.85em; margin-top:-8px;">${safeText(rangoTexto)} &nbsp;|&nbsp; Total vendido: <b>${totalVendido}</b> a <b>${listaClientes.length}</b> cliente(s)</p>
+        <div style="max-height:50vh; overflow-y:auto;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="border-bottom:2px solid #ccc; text-align:left;">
+                        <th style="padding:6px;">Cliente</th>
+                        <th style="padding:6px; text-align:center;">Cant.</th>
+                        <th style="padding:6px;">Fecha(s) de compra</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${filasHtml}
+                </tbody>
+            </table>
+        </div>
+        <button onclick="closeModal()" style="margin-top:15px; width:100%; border:none; padding:10px; cursor:pointer; background:#e2e8f0; border-radius:6px;">Cerrar</button>
+    `);
+}
 
 
 
@@ -10236,6 +10378,117 @@ async function guardarCompra() {
 
 
 
+
+<div id="resetStockModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; padding:24px; width:90%; max-width:420px; box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+        <h3 style="margin:0 0 8px 0; color:#c0392b;">⚠️ Poner stock en 0</h3>
+        <p style="font-size:13px; color:#555; margin-bottom:16px;">
+            Esto va a poner en <b>0</b> el stock de <b>todos</b> los productos de la categoría elegida.
+            Usalo antes de empezar a cargar el stock real, para que no queden números viejos en los productos que te olvides de tocar.
+        </p>
+
+        <label style="font-size:12px; font-weight:bold; display:block; margin-bottom:4px;">Categoría:</label>
+        <select id="resetStockCategoria" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ddd; margin-bottom:16px;">
+            <option value="">Cargando categorías...</option>
+        </select>
+
+        <label style="font-size:12px; font-weight:bold; display:block; margin-bottom:4px;">
+            Escribí <b>CONFIRMAR</b> para habilitar el botón:
+        </label>
+        <input type="text" id="resetStockConfirmText" placeholder="CONFIRMAR" autocomplete="off"
+            oninput="document.getElementById('btnConfirmarResetStock').disabled = (this.value.trim().toUpperCase() !== 'CONFIRMAR');"
+            style="width:100%; padding:10px; border-radius:6px; border:1px solid #ddd; margin-bottom:20px; box-sizing:border-box;">
+
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+            <button type="button" onclick="cerrarModalResetStock()"
+                style="padding:10px 16px; border-radius:6px; border:1px solid #ddd; background:#fff; cursor:pointer;">
+                Cancelar
+            </button>
+            <button type="button" id="btnConfirmarResetStock" onclick="confirmarResetStock()" disabled
+                style="padding:10px 16px; border-radius:6px; border:none; background:#c0392b; color:#fff; font-weight:bold; cursor:pointer; opacity:0.5;">
+                Poner todo en 0
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+async function abrirModalResetStock() {
+    const modal = document.getElementById('resetStockModal');
+    const select = document.getElementById('resetStockCategoria');
+    const confirmInput = document.getElementById('resetStockConfirmText');
+    const confirmBtn = document.getElementById('btnConfirmarResetStock');
+
+    // Reset del formulario cada vez que se abre
+    confirmInput.value = '';
+    confirmBtn.disabled = true;
+    confirmBtn.style.opacity = '0.5';
+
+    if (typeof availableCategorias === 'undefined' || availableCategorias.length === 0) {
+        await fetchAvailableCategorias();
+    }
+
+    if (!availableCategorias || availableCategorias.length === 0) {
+        select.innerHTML = '<option value="">No hay categorías disponibles</option>';
+    } else {
+        select.innerHTML = availableCategorias
+            .map(c => `<option value="${c.id}">${c.nombre}</option>`)
+            .join('');
+    }
+
+    modal.style.display = 'flex';
+}
+
+function cerrarModalResetStock() {
+    document.getElementById('resetStockModal').style.display = 'none';
+}
+
+async function confirmarResetStock() {
+    const select = document.getElementById('resetStockCategoria');
+    const categoriaId = select.value;
+    const categoriaNombre = select.options[select.selectedIndex]
+        ? select.options[select.selectedIndex].text
+        : '';
+
+    if (!categoriaId) {
+        alert('Elegí una categoría antes de confirmar.');
+        return;
+    }
+
+    const btn = document.getElementById('btnConfirmarResetStock');
+    const textoOriginal = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = 'Aplicando...';
+
+    try {
+        const { error, count } = await supabase
+            .from('promociones')
+            .update({ stock: 0 })
+            .eq('categoria_id', categoriaId)
+            .select('id', { count: 'exact' });
+
+        if (error) throw error;
+
+        // Invalidamos caches locales para que se vea reflejado el cambio
+        if (typeof promosCache !== 'undefined') promosCache = [];
+        if (window.appCache && window.appCache.promos) window.appCache.promos = [];
+
+        cerrarModalResetStock();
+        showToast(`Stock en 0 para "${categoriaNombre}" (${count ?? '¿?'} productos).`);
+
+        // Refrescamos la vista actual si hay un filtro de categoría activo
+        if (typeof handlePromoFilterChange === 'function') {
+            handlePromoFilterChange();
+        }
+    } catch (err) {
+        console.error('Error reseteando stock por categoría:', err);
+        alert('Ocurrió un error al poner el stock en 0. Revisá la consola para más detalles.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = textoOriginal;
+    }
+}
+</script>
 
 </body>
 </html>

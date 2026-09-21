@@ -944,6 +944,7 @@ button[onclick*="delete"] {
     <li><button class="tab-btn" data-tab="ctaCte">Cuenta Corriente</button></li>
     <li><button class="tab-btn" data-tab="reporteVentas">Reporte de Ventas</button></li>
     <li><button class="tab-btn" data-tab="compras">Compras</button></li>
+    <li><button class="tab-btn" data-tab="gananciaNeta">📈 Ganancia Neta</button></li>
     <li><button class="tab-btn" data-tab="categorias">Categorías</button></li>
     <li><button class="tab-btn" data-tab="tiposProducto">Tipos de Producto</button></li>
     <li><button class="tab-btn" data-tab="localidades">Localidades</button></li>
@@ -1338,7 +1339,7 @@ button[onclick*="delete"] {
 
 <section id="compras" class="section">
     <h2>🧾 Compras a Proveedores</h2>
-    <p style="color:#555;">Cargue aquí las facturas de compra. El stock de los productos existentes se suma automáticamente. Si el producto es nuevo, se crea con su categoría, precio de venta e imagen.</p>
+    <p style="color:#555;">Cargue aquí las facturas de compra. El stock de los productos existentes se suma automáticamente y su costo se actualiza con lo cargado en cada factura. Si el producto es nuevo, se crea con su categoría, precio de venta, costo e imagen. Las facturas ya cargadas se pueden editar con el botón "✏️ Editar" de cada una.</p>
 
     <div style="margin-bottom:15px;">
         <button onclick="abrirModalCompra()" style="background:var(--primary); color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; font-weight:bold;">
@@ -1348,6 +1349,73 @@ button[onclick*="delete"] {
 
     <div id="comprasListContainer" style="margin-top:20px;">
         <p>Cargando facturas de compra...</p>
+    </div>
+</section>
+
+<section id="gananciaNeta" class="section">
+    <h2>📈 Ganancia Neta</h2>
+    <p style="color:#555;">
+        Calcula la ganancia neta de un período: ventas facturadas en Pedidos, menos el costo de esos
+        mismos productos (según el último costo cargado en Compras), menos los gastos del mismo rango de fechas.
+    </p>
+
+    <div class="card" style="flex-wrap:wrap; gap:10px; margin-bottom:15px;">
+        <div style="flex:1; min-width:160px;">
+            <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">Desde:</label>
+            <input type="date" id="gananciaDesde" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+        </div>
+        <div style="flex:1; min-width:160px;">
+            <label style="display:block; font-weight:bold; font-size:0.85em; margin-bottom:4px;">Hasta:</label>
+            <input type="date" id="gananciaHasta" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+        </div>
+        <div style="flex:1; min-width:160px; display:flex; align-items:flex-end;">
+            <button onclick="calcularGananciaNeta()" style="width:100%; background:var(--primary); color:white; border:none; padding:11px; border-radius:8px; font-weight:bold; cursor:pointer;">
+                🔍 Calcular Ganancia
+            </button>
+        </div>
+    </div>
+
+    <div id="gananciaNetaResultado" style="display:none;">
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap:14px; margin-bottom:20px;">
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; padding:16px; border-radius:12px; text-align:center;">
+                <div style="font-size:0.8em; color:#166534; font-weight:bold;">💰 INGRESOS (VENTAS)</div>
+                <div id="gananciaIngresos" style="font-size:1.4em; font-weight:bold; color:#166534; margin-top:6px;">$0</div>
+            </div>
+            <div style="background:#fff7ed; border:1px solid #fed7aa; padding:16px; border-radius:12px; text-align:center;">
+                <div style="font-size:0.8em; color:#9a3412; font-weight:bold;">📦 COSTO MERCADERÍA VENDIDA</div>
+                <div id="gananciaCosto" style="font-size:1.4em; font-weight:bold; color:#9a3412; margin-top:6px;">$0</div>
+            </div>
+            <div style="background:#fef2f2; border:1px solid #fecaca; padding:16px; border-radius:12px; text-align:center;">
+                <div style="font-size:0.8em; color:#991b1b; font-weight:bold;">💸 GASTOS</div>
+                <div id="gananciaGastos" style="font-size:1.4em; font-weight:bold; color:#991b1b; margin-top:6px;">$0</div>
+            </div>
+            <div id="gananciaNetaCard" style="background:#eef2ff; border:1px solid #c7d2fe; padding:16px; border-radius:12px; text-align:center;">
+                <div style="font-size:0.8em; color:#3730a3; font-weight:bold;">📈 GANANCIA NETA</div>
+                <div id="gananciaNetaTotal" style="font-size:1.6em; font-weight:bold; color:#3730a3; margin-top:6px;">$0</div>
+            </div>
+        </div>
+
+        <div id="gananciaAvisoCostos" style="display:none; background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:12px 16px; border-radius:10px; margin-bottom:15px; font-size:0.9em;"></div>
+
+        <div class="card" style="flex-direction:column; align-items:stretch;">
+            <h3 style="margin-top:0;">Detalle de productos vendidos en el rango</h3>
+            <div style="overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                    <thead style="background:#f1f5f9;">
+                        <tr>
+                            <th style="text-align:left; padding:8px;">Producto</th>
+                            <th style="text-align:right; padding:8px;">Cant. vendida</th>
+                            <th style="text-align:right; padding:8px;">Precio venta prom.</th>
+                            <th style="text-align:right; padding:8px;">Costo unitario</th>
+                            <th style="text-align:right; padding:8px;">Ingreso</th>
+                            <th style="text-align:right; padding:8px;">Costo total</th>
+                            <th style="text-align:right; padding:8px;">Ganancia</th>
+                        </tr>
+                    </thead>
+                    <tbody id="gananciaDetalleProductos"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </section>
 
@@ -2051,8 +2119,20 @@ async function renderCtaCte() {
             };
         }
 
+        // Recalculamos el saldo real a partir del array de pagos, en vez de
+        // usar solo la columna saldo_pendiente (que a veces queda desactualizada
+        // si el pago se cargó desde otro lugar).
+        let pagosArray = [];
+        try {
+            pagosArray = Array.isArray(p.pagos) ? p.pagos : JSON.parse(p.pagos || "[]");
+        } catch (e) {
+            pagosArray = [];
+        }
+        const pagadoPedido = pagosArray.reduce((acc, pg) => acc + (parseFloat(pg.monto) || 0), 0);
+        const saldoReal = Math.max(0, Number(p.total || 0) - pagadoPedido);
+
         clientes[key].pedidos++;
-        clientes[key].saldo += Number(p.saldo_pendiente || 0);
+        clientes[key].saldo += saldoReal;
     });
 
     container.innerHTML = "";
@@ -2092,10 +2172,16 @@ async function verDetalleCtaCte(identificador) {
 
     try {
 
+        // 🔧 FIX: antes esta consulta sólo traía pedidos con saldo_pendiente > 0,
+        // por eso los pedidos ya pagados (o pedidos nuevos con pagos parciales
+        // recién cargados) no aparecían en el detalle del cliente. Ahora traemos
+        // TODOS los pedidos del cliente, para poder mostrar el historial completo
+        // (incluyendo los pagos cargados desde Cta Cte, desde el pedido en
+        // index_tienda, o desde la sección Pedidos — todos quedan guardados en la
+        // misma columna "pagos" de cada pedido).
         let query = supabase
             .from('pedidos')
             .select('*')
-            .gt('saldo_pendiente', 0)
             .order('created_at', { ascending: false });
 
         // Buscar por DNI o por nombre según lo recibido
@@ -2110,10 +2196,11 @@ async function verDetalleCtaCte(identificador) {
         if (error) throw error;
 
         if (!pedidos || pedidos.length === 0) {
-            return alert('No se encontraron pedidos pendientes.');
+            return alert('No se encontraron pedidos para este cliente.');
         }
 
         let deudaTotal = 0;
+        let totalPagadoGeneral = 0;
 
         let html = `
             <div style="max-height:70vh; overflow-y:auto; padding:10px;">
@@ -2124,7 +2211,56 @@ async function verDetalleCtaCte(identificador) {
 
         pedidos.forEach(p => {
 
-            deudaTotal += Number(p.saldo_pendiente || 0);
+            let pagosArray = [];
+            try {
+                pagosArray = Array.isArray(p.pagos) ? p.pagos : JSON.parse(p.pagos || "[]");
+            } catch (e) {
+                pagosArray = [];
+            }
+
+            const totalPedido = Number(p.total || 0);
+            const pagadoPedido = pagosArray.reduce((acc, pg) => acc + (parseFloat(pg.monto) || 0), 0);
+            // El saldo se recalcula en vivo a partir de los pagos cargados, en vez
+            // de confiar únicamente en la columna saldo_pendiente (que puede haber
+            // quedado desactualizada), aunque igual mostramos la que trae la fila.
+            const saldoCalculado = Math.max(0, totalPedido - pagadoPedido);
+
+            deudaTotal += Number(p.saldo_pendiente != null ? p.saldo_pendiente : saldoCalculado);
+            totalPagadoGeneral += pagadoPedido;
+
+            // Detalle de cada pago, tal cual se cargó (fecha, método, monto y de
+            // dónde vino, si el registro lo indica con "origen").
+            const pagosHtml = pagosArray.length === 0
+                ? '<p style="color:#999; font-size:0.85em; margin:6px 0 0 0;">Sin pagos cargados todavía.</p>'
+                : `
+                    <table style="width:100%; border-collapse:collapse; font-size:0.85em; margin-top:8px;">
+                        <thead>
+                            <tr style="background:#eee;">
+                                <th style="text-align:left; padding:4px 6px;">Fecha</th>
+                                <th style="text-align:left; padding:4px 6px;">Método</th>
+                                <th style="text-align:left; padding:4px 6px;">Origen</th>
+                                <th style="text-align:right; padding:4px 6px;">Monto</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${pagosArray.map(pg => {
+                                let metodoTxt = pg.metodo || 'Efectivo';
+                                if (metodoTxt === 'Transferencia' && pg.destinatario) {
+                                    metodoTxt += ` (${pg.destinatario})`;
+                                }
+                                const fechaTxt = pg.fecha ? new Date(String(pg.fecha).slice(0,10) + 'T00:00:00').toLocaleDateString('es-AR') : '-';
+                                return `
+                                    <tr style="border-bottom:1px solid #eee;">
+                                        <td style="padding:4px 6px;">${fechaTxt}</td>
+                                        <td style="padding:4px 6px;">${escapeHtml(metodoTxt)}</td>
+                                        <td style="padding:4px 6px;">${escapeHtml(pg.origen || 'Pedido')}</td>
+                                        <td style="padding:4px 6px; text-align:right;">$${Number(pg.monto || 0).toLocaleString('es-AR')}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                `;
 
             html += `
                 <div style="
@@ -2132,18 +2268,20 @@ async function verDetalleCtaCte(identificador) {
                     border-radius:8px;
                     padding:12px;
                     margin-bottom:10px;
-                    background:#fafafa;
+                    background:${saldoCalculado > 0 ? '#fafafa' : '#f0fdf4'};
                 ">
-                    <p><b>Pedido #${p.id}</b></p>
+                    <p><b>Pedido #${p.id}</b> ${saldoCalculado <= 0 ? '<span style="color:#10b981; font-weight:bold;">✅ Pagado</span>' : ''}</p>
                     <p>📅 ${new Date(p.created_at).toLocaleDateString('es-AR')}</p>
-                    <p>💰 Total: $${Number(p.total).toLocaleString('es-AR')}</p>
-                    <p style="color:#e74c3c;">
+                    <p>💰 Total: $${totalPedido.toLocaleString('es-AR')} · Pagado: $${pagadoPedido.toLocaleString('es-AR')}</p>
+                    <p style="color:${saldoCalculado > 0 ? '#e74c3c' : '#10b981'};">
                         <b>Saldo pendiente:
-                        $${Number(p.saldo_pendiente || 0).toLocaleString('es-AR')}</b>
+                        $${saldoCalculado.toLocaleString('es-AR')}</b>
                     </p>
 
+                    ${pagosHtml}
+
                     <button
-                        onclick='cerrarModalCtaCte(); verDetallePagosCC(${JSON.stringify(p).replace(/'/g, "&apos;")})'
+                        onclick='cerrarModalCtaCte(); abrirModalPago(${p.id})'
                         style="
                             background:var(--primary);
                             color:white;
@@ -2151,6 +2289,7 @@ async function verDetalleCtaCte(identificador) {
                             padding:8px 12px;
                             border-radius:6px;
                             cursor:pointer;
+                            margin-top:8px;
                         ">
                         💳 Gestionar Pago
                     </button>
@@ -2171,6 +2310,7 @@ async function verDetalleCtaCte(identificador) {
                     Deuda Total:
                     $${deudaTotal.toLocaleString('es-AR')}
                 </h3>
+                <p style="color:#10b981; font-weight:bold; margin-top:-8px;">Total pagado (histórico): $${totalPagadoGeneral.toLocaleString('es-AR')}</p>
 
                 <button onclick="cerrarModalCtaCte()"
                     style="
@@ -2309,11 +2449,14 @@ async function confirmarPagoCtaCte() {
     const { identificador } = clienteCtaCteActual;
 
     try {
-        // Traer todos los pedidos con saldo pendiente de este cliente, del mas antiguo al mas nuevo
+        // Traer TODOS los pedidos de este cliente, del mas antiguo al mas nuevo.
+        // 🔧 FIX: ya no filtramos por saldo_pendiente > 0 en la consulta, porque esa
+        // columna puede haber quedado desactualizada si el pago se cargó desde otro
+        // lugar. En su lugar, calculamos el saldo real de cada pedido sumando su
+        // propio array de "pagos" y filtramos acá mismo.
         let query = supabase
             .from('pedidos')
             .select('*')
-            .gt('saldo_pendiente', 0)
             .order('created_at', { ascending: true });
 
         if (/^\d+$/.test(String(identificador))) {
@@ -2322,10 +2465,25 @@ async function confirmarPagoCtaCte() {
             query = query.eq('cliente', identificador);
         }
 
-        const { data: pedidos, error } = await query;
+        const { data: pedidosRaw, error } = await query;
         if (error) throw error;
 
-        if (!pedidos || pedidos.length === 0) {
+        if (!pedidosRaw || pedidosRaw.length === 0) {
+            return alert("Este cliente no tiene pedidos con saldo pendiente.");
+        }
+
+        const pedidos = pedidosRaw.filter(p => {
+            let pagosArr = [];
+            try {
+                pagosArr = typeof p.pagos === 'string' ? JSON.parse(p.pagos) : (p.pagos || []);
+            } catch (e) {
+                pagosArr = [];
+            }
+            const pagado = pagosArr.reduce((acc, pg) => acc + (parseFloat(pg.monto) || 0), 0);
+            return (Number(p.total || 0) - pagado) > 0;
+        });
+
+        if (pedidos.length === 0) {
             return alert("Este cliente no tiene pedidos con saldo pendiente.");
         }
 
@@ -2335,17 +2493,18 @@ async function confirmarPagoCtaCte() {
         for (const p of pedidos) {
             if (montoRestante <= 0) break;
 
-            const saldoPedido = Number(p.saldo_pendiente || 0);
-            if (saldoPedido <= 0) continue;
-
-            const aplicado = Math.min(saldoPedido, montoRestante);
-
             let historialActual = [];
             try {
                 historialActual = typeof p.pagos === 'string' ? JSON.parse(p.pagos) : (p.pagos || []);
             } catch (e) {
                 historialActual = [];
             }
+
+            const pagadoPrevio = historialActual.reduce((acc, pg) => acc + (parseFloat(pg.monto) || 0), 0);
+            const saldoPedido = Math.max(0, Number(p.total || 0) - pagadoPrevio);
+            if (saldoPedido <= 0) continue;
+
+            const aplicado = Math.min(saldoPedido, montoRestante);
 
             const nuevoPago = {
                 monto: aplicado,
@@ -2750,6 +2909,9 @@ function activateSection(tab) {
             break;
         case 'compras':
             if (typeof initComprasSection === 'function') initComprasSection();
+            break;
+        case 'gananciaNeta':
+            if (typeof initGananciaNetaSection === 'function') initGananciaNetaSection();
             break;
 case 'ctaCte':
     break;
@@ -9623,6 +9785,8 @@ async function savePrepChanges() {
 
 let comprasItemsActuales = [];      // Items cargados en la factura que se está armando
 let comprasNuevoItemImagenFile = null; // Imagen elegida (temporal) para el producto nuevo en curso
+let compraIdEditando = null;        // Si no es null, el modal de compra está editando esa factura (en vez de crear una nueva)
+let comprasItemsEliminadosEdicion = []; // Items que estaban en la factura original y se quitaron durante la edición (para revertir su stock al guardar)
 
 async function initComprasSection() {
     if (allCategories.length === 0) {
@@ -9652,39 +9816,82 @@ async function fetchCompras() {
     renderComprasList(data || []);
 }
 
+let comprasCache = []; // Última lista de facturas de compra traída de Supabase (para poder editarlas sin re-consultar)
+
+const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
 function renderComprasList(data) {
     const container = document.getElementById('comprasListContainer');
+    comprasCache = data || [];
+
     if (!data || data.length === 0) {
         container.innerHTML = '<p>Todavía no cargó ninguna factura de compra.</p>';
         return;
     }
 
-    container.innerHTML = data.map(compra => {
-        const items = Array.isArray(compra.items) ? compra.items : [];
-        const fecha = compra.fecha
-            ? new Date(compra.fecha + 'T00:00:00').toLocaleDateString('es-AR')
-            : (compra.created_at ? new Date(compra.created_at).toLocaleDateString('es-AR') : 'Sin fecha');
+    // ---- Agrupar las facturas por mes/año (según la fecha de la factura, o
+    // la fecha de creación del registro si no tiene fecha cargada) ----
+    const grupos = {}; // "AAAA-MM" -> { label, compras: [], total }
+    data.forEach(compra => {
+        const fechaBase = compra.fecha || (compra.created_at ? compra.created_at.slice(0, 10) : null);
+        let claveGrupo, labelGrupo;
+        if (fechaBase) {
+            const [anio, mes] = fechaBase.split('-');
+            claveGrupo = `${anio}-${mes}`;
+            labelGrupo = `${MESES_ES[parseInt(mes, 10) - 1] || mes} ${anio}`;
+        } else {
+            claveGrupo = 'sin-fecha';
+            labelGrupo = 'Sin fecha';
+        }
+        if (!grupos[claveGrupo]) grupos[claveGrupo] = { label: labelGrupo, compras: [], total: 0 };
+        grupos[claveGrupo].compras.push(compra);
+        grupos[claveGrupo].total += Number(compra.total || 0);
+    });
 
-        const itemsHtml = items.map(it => `
-            <li>${escapeHtml(it.nombre)} — ${it.esNuevo ? '🆕 ' : ''}x${it.cantidad}${it.costoUnitario ? ` — costo $${Number(it.costoUnitario).toLocaleString('es-AR')}` : ''}${it.nuevoPrecio ? ` — nuevo precio venta: $${Number(it.nuevoPrecio).toLocaleString('es-AR')}` : ''}</li>
-        `).join('');
+    // Ordenar los grupos del más reciente al más antiguo
+    const clavesOrdenadas = Object.keys(grupos).sort((a, b) => b.localeCompare(a));
+
+    container.innerHTML = clavesOrdenadas.map(clave => {
+        const grupo = grupos[clave];
+
+        const comprasHtml = grupo.compras.map(compra => {
+            const items = Array.isArray(compra.items) ? compra.items : [];
+            const fecha = compra.fecha
+                ? new Date(compra.fecha + 'T00:00:00').toLocaleDateString('es-AR')
+                : (compra.created_at ? new Date(compra.created_at).toLocaleDateString('es-AR') : 'Sin fecha');
+
+            const itemsHtml = items.map(it => `
+                <li>${escapeHtml(it.nombre)} — ${it.esNuevo ? '🆕 ' : ''}x${it.cantidad}${it.costoUnitario ? ` — costo $${Number(it.costoUnitario).toLocaleString('es-AR')}` : ' — <span style="color:#e67e22;">sin costo cargado</span>'}${it.nuevoPrecio ? ` — nuevo precio venta: $${Number(it.nuevoPrecio).toLocaleString('es-AR')}` : ''}</li>
+            `).join('');
+
+            return `
+                <div class="card" style="align-items:flex-start; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; width:100%; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <b>${escapeHtml(compra.proveedor || 'Proveedor sin nombre')}</b>
+                            ${compra.numero_factura ? ` — Factura N° ${escapeHtml(compra.numero_factura)}` : ''}
+                            <div class="card-stock">📅 ${fecha} · ${items.length} ítem(s)</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div class="card-price">$${Number(compra.total || 0).toLocaleString('es-AR')}</div>
+                            <button onclick="editarCompra('${compra.id}')" style="background:#f59e0b; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right:6px;">✏️ Editar</button>
+                            <button class="delete-btn" onclick="eliminarCompra('${compra.id}')">🗑️ Eliminar Registro</button>
+                        </div>
+                    </div>
+                    <ul style="margin:8px 0 0 0; padding-left:18px; font-size:0.9em; color:#555;">
+                        ${itemsHtml}
+                    </ul>
+                </div>
+            `;
+        }).join('');
 
         return `
-            <div class="card" style="align-items:flex-start; flex-direction:column;">
-                <div style="display:flex; justify-content:space-between; width:100%; flex-wrap:wrap; gap:8px;">
-                    <div>
-                        <b>${escapeHtml(compra.proveedor || 'Proveedor sin nombre')}</b>
-                        ${compra.numero_factura ? ` — Factura N° ${escapeHtml(compra.numero_factura)}` : ''}
-                        <div class="card-stock">📅 ${fecha} · ${items.length} ítem(s)</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div class="card-price">$${Number(compra.total || 0).toLocaleString('es-AR')}</div>
-                        <button class="delete-btn" onclick="eliminarCompra('${compra.id}')">🗑️ Eliminar Registro</button>
-                    </div>
+            <div style="margin-bottom:22px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; background:#eef2ff; padding:10px 14px; border-radius:8px; margin-bottom:10px; position:sticky; top:0; z-index:5;">
+                    <h3 style="margin:0; color:#3730a3; text-transform:capitalize;">🗓️ ${escapeHtml(grupo.label)}</h3>
+                    <span style="font-weight:bold; color:#3730a3;">${grupo.compras.length} factura(s) · $${grupo.total.toLocaleString('es-AR')}</span>
                 </div>
-                <ul style="margin:8px 0 0 0; padding-left:18px; font-size:0.9em; color:#555;">
-                    ${itemsHtml}
-                </ul>
+                ${comprasHtml}
             </div>
         `;
     }).join('');
@@ -9701,7 +9908,9 @@ async function eliminarCompra(id) {
 /* ---------- Modal: nueva factura de compra ---------- */
 
 function abrirModalCompra() {
+    compraIdEditando = null;
     comprasItemsActuales = [];
+    comprasItemsEliminadosEdicion = [];
     comprasNuevoItemImagenFile = null;
 
     document.getElementById('compraFecha').value = new Date().toISOString().split('T')[0];
@@ -9712,6 +9921,79 @@ function abrirModalCompra() {
     document.getElementById('compraNuevoProductoForm').style.display = 'none';
     resetFormNuevoProductoCompra();
 
+    const titulo = document.getElementById('modalCompraTitulo');
+    if (titulo) titulo.textContent = '🧾 Nueva Factura de Compra';
+    const btnGuardar = document.getElementById('modalCompraBtnGuardar');
+    if (btnGuardar) btnGuardar.textContent = '💾 Guardar Factura';
+
+    cargarCategoriasSelectCompra();
+    renderCompraItemsList();
+
+    document.getElementById('modalCompra').style.display = 'flex';
+}
+
+/* ---------- Editar una factura de compra ya cargada ----------
+   Permite modificar fecha, proveedor, N° de factura, cantidades, costos
+   y precios de una factura existente. Al guardar, se ajusta el stock por
+   la DIFERENCIA entre la cantidad nueva y la original (no se vuelve a sumar
+   todo de nuevo), se actualiza el costo del producto con el último valor
+   cargado, y si se quita un ítem que ya había sumado stock, ese stock se
+   revierte. Los ítems nuevos que se agreguen durante la edición se tratan
+   igual que en una factura nueva. */
+async function editarCompra(id) {
+    const compra = comprasCache.find(c => String(c.id) === String(id));
+    if (!compra) { alert('No se encontró la factura a editar.'); return; }
+
+    compraIdEditando = compra.id;
+    comprasNuevoItemImagenFile = null;
+    comprasItemsEliminadosEdicion = [];
+
+    const items = Array.isArray(compra.items) ? compra.items : [];
+    const idsProductos = items.filter(it => it.productoId != null).map(it => it.productoId);
+
+    // Traemos el stock y precio ACTUALES reales (no los que tenía el producto
+    // en el momento de esa factura), solo para mostrarlos de referencia.
+    let stockPrecioActual = {};
+    if (idsProductos.length > 0) {
+        const { data: prods } = await supabase
+            .from('promociones')
+            .select('id, stock, precio')
+            .in('id', idsProductos);
+        (prods || []).forEach(p => { stockPrecioActual[String(p.id)] = p; });
+    }
+
+    // Reconstruimos comprasItemsActuales a partir de lo guardado, agregando
+    // los campos "*_Original" que usamos para calcular la diferencia de stock
+    // al guardar.
+    comprasItemsActuales = items.map(it => {
+        const actual = stockPrecioActual[String(it.productoId)] || {};
+        return {
+            esNuevo: false, // al editar, el producto ya existe siempre (si era nuevo, ya se creó al guardar la factura original)
+            id: it.productoId,
+            nombre: it.nombre,
+            stockActual: actual.stock ?? '—',
+            precioActual: actual.precio ?? '—',
+            cantidad: Number(it.cantidad) || 0,
+            cantidadOriginal: Number(it.cantidad) || 0,
+            costoUnitario: Number(it.costoUnitario) || 0,
+            nuevoPrecio: it.nuevoPrecio != null ? Number(it.nuevoPrecio) : '',
+            yaExistiaEnFactura: true
+        };
+    });
+
+    document.getElementById('compraFecha').value = compra.fecha || (compra.created_at ? compra.created_at.slice(0,10) : new Date().toISOString().split('T')[0]);
+    document.getElementById('compraProveedor').value = compra.proveedor || '';
+    document.getElementById('compraNumeroFactura').value = compra.numero_factura || '';
+    document.getElementById('compraBuscarProducto').value = '';
+    document.getElementById('compraBuscarResultados').style.display = 'none';
+    document.getElementById('compraNuevoProductoForm').style.display = 'none';
+    resetFormNuevoProductoCompra();
+
+    const titulo = document.getElementById('modalCompraTitulo');
+    if (titulo) titulo.textContent = `✏️ Editar Factura de Compra — ${compra.proveedor || 'Proveedor sin nombre'}`;
+    const btnGuardar = document.getElementById('modalCompraBtnGuardar');
+    if (btnGuardar) btnGuardar.textContent = '💾 Guardar Cambios';
+
     cargarCategoriasSelectCompra();
     renderCompraItemsList();
 
@@ -9720,6 +10002,7 @@ function abrirModalCompra() {
 
 function cerrarModalCompra() {
     document.getElementById('modalCompra').style.display = 'none';
+    compraIdEditando = null;
 }
 
 async function cargarCategoriasSelectCompra() {
@@ -9928,7 +10211,7 @@ function renderCompraItemsList(highlightIdx = null) {
         <div class="card compra-item-card ${idx === highlightIdx ? 'compra-item-nuevo' : ''}" style="align-items:center;">
             <div class="card-info">
                 <b>${escapeHtml(item.nombre)} ${item.esNuevo ? '<span style="color:#10b981; font-size:0.8em;">(NUEVO)</span>' : ''}</b>
-                ${!item.esNuevo ? `<span class="card-stock">Stock actual: ${item.stockActual} · Precio actual: $${item.precioActual}</span>` : ''}
+                ${!item.esNuevo ? `<span class="card-stock">Stock actual: ${item.stockActual} · Precio actual: $${item.precioActual}${item.yaExistiaEnFactura ? ` · Cantidad original en esta factura: ${item.cantidadOriginal}` : ''}</span>` : ''}
                 <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:4px;">
                     <label style="font-size:0.8em;">Cantidad:
                         <input type="number" min="1" value="${item.cantidad}" style="width:70px;" autofocus
@@ -9982,6 +10265,15 @@ function updateCompraItemField(idx, field, value) {
 }
 
 function quitarItemCompra(idx) {
+    const item = comprasItemsActuales[idx];
+    // Si el item ya formaba parte de la factura original (estamos editando),
+    // guardamos su cantidad para revertir el stock que había sumado al guardar.
+    if (item && item.yaExistiaEnFactura && item.id != null) {
+        comprasItemsEliminadosEdicion.push({
+            productoId: item.id,
+            cantidad: item.cantidadOriginal
+        });
+    }
     comprasItemsActuales.splice(idx, 1);
     renderCompraItemsList();
 }
@@ -10005,7 +10297,12 @@ async function guardarCompra() {
     const proveedor = document.getElementById('compraProveedor').value.trim();
     const numeroFactura = document.getElementById('compraNumeroFactura').value.trim();
 
-    if (!confirm('¿Confirma guardar esta factura de compra? Se actualizará el stock (y precios, si corresponde) de los productos.')) return;
+    const esEdicion = !!compraIdEditando;
+
+    const mensajeConfirmacion = esEdicion
+        ? '¿Confirma guardar los cambios de esta factura? Se ajustará el stock por la diferencia de cantidades y se actualizará el costo de los productos.'
+        : '¿Confirma guardar esta factura de compra? Se actualizará el stock (y precios, si corresponde) de los productos.';
+    if (!confirm(mensajeConfirmacion)) return;
 
     try {
         const itemsParaGuardar = [];
@@ -10037,6 +10334,7 @@ async function guardarCompra() {
                         nombre: item.nombre,
                         precio: item.precioVenta,       // Precio de venta: obligatorio por ser producto nuevo
                         stock: item.cantidad,            // Stock inicial = cantidad comprada
+                        costo: item.costoUnitario || 0,  // Costo: se usa para calcular la ganancia neta
                         categoria_id: item.categoriaId,
                         imagen: imagenNombre,
                         imagen_url: imagenUrl
@@ -10056,17 +10354,30 @@ async function guardarCompra() {
                 });
 
             } else {
-                // --- PRODUCTO EXISTENTE: solo suma stock; el precio solo cambia si se cargó uno nuevo ---
+                // --- PRODUCTO EXISTENTE ---
+                // En una factura nueva, la cantidad comprada SIEMPRE se suma al stock.
+                // En una edición, solo se ajusta la DIFERENCIA entre la cantidad nueva
+                // y la que tenía originalmente esa factura (para no duplicar stock que
+                // ya se había sumado al cargarla la primera vez).
                 const { data: actual, error: fetchError } = await supabase
                     .from('promociones')
-                    .select('stock, precio')
+                    .select('stock, precio, costo')
                     .eq('id', item.id)
                     .single();
 
                 if (fetchError) throw fetchError;
 
-                const nuevoStock = (Number(actual.stock) || 0) + (Number(item.cantidad) || 0);
+                const cantidadOriginal = esEdicion ? (Number(item.cantidadOriginal) || 0) : 0;
+                const deltaCantidad = (Number(item.cantidad) || 0) - cantidadOriginal;
+                const nuevoStock = Math.max(0, (Number(actual.stock) || 0) + deltaCantidad);
                 const updateData = { stock: nuevoStock };
+
+                // El costo del producto se actualiza siempre que se cargue un costo
+                // unitario en la factura, para que vaya quedando al día a medida que
+                // entran nuevas compras.
+                if (item.costoUnitario && Number(item.costoUnitario) > 0) {
+                    updateData.costo = Number(item.costoUnitario);
+                }
 
                 // Solo se toca el precio de venta si el usuario cargó manualmente un valor
                 // distinto al precio actual. Si lo dejó vacío, el producto conserva su precio.
@@ -10095,25 +10406,58 @@ async function guardarCompra() {
             }
         }
 
+        // --- Revertir el stock de los ítems que estaban en la factura original
+        //     y se quitaron durante la edición ---
+        if (esEdicion && comprasItemsEliminadosEdicion.length > 0) {
+            for (const eliminado of comprasItemsEliminadosEdicion) {
+                if (eliminado.productoId == null) continue;
+                const { data: actualElim } = await supabase
+                    .from('promociones')
+                    .select('stock')
+                    .eq('id', eliminado.productoId)
+                    .single();
+                if (actualElim) {
+                    const stockRevertido = Math.max(0, (Number(actualElim.stock) || 0) - (Number(eliminado.cantidad) || 0));
+                    await supabase.from('promociones').update({ stock: stockRevertido }).eq('id', eliminado.productoId);
+                }
+            }
+        }
+
         const total = calcularTotalCompraFactura();
 
-        const { error: compraError } = await supabase
-            .from('compras')
-            .insert([{
-                fecha,
-                proveedor,
-                numero_factura: numeroFactura,
-                items: itemsParaGuardar,
-                total
-            }]);
+        if (esEdicion) {
+            const { error: compraError } = await supabase
+                .from('compras')
+                .update({
+                    fecha,
+                    proveedor,
+                    numero_factura: numeroFactura,
+                    items: itemsParaGuardar,
+                    total
+                })
+                .eq('id', compraIdEditando);
 
-        if (compraError) throw compraError;
+            if (compraError) throw compraError;
+        } else {
+            const { error: compraError } = await supabase
+                .from('compras')
+                .insert([{
+                    fecha,
+                    proveedor,
+                    numero_factura: numeroFactura,
+                    items: itemsParaGuardar,
+                    total
+                }]);
+
+            if (compraError) throw compraError;
+        }
 
         // Invalidar caches para reflejar stock/precio actualizados en el resto del panel
         promosCache = [];
         allPromos = [];
+        comprasItemsEliminadosEdicion = [];
 
-        showToast('✅ Factura de compra guardada. Stock actualizado.');
+        showToast(esEdicion ? '✅ Factura de compra actualizada. Stock y costos ajustados.' : '✅ Factura de compra guardada. Stock actualizado.');
         cerrarModalCompra();
         fetchCompras();
 
@@ -10123,6 +10467,222 @@ async function guardarCompra() {
     }
 }
 
+
+/* =========================================================
+   GANANCIA NETA
+   =========================================================
+   Cruza, para un rango de fechas:
+     - Ingresos: lo facturado en "pedidos" (precio de venta cargado en cada
+       ítem del pedido, tomando "created_at" como fecha del pedido).
+     - Costo de mercadería vendida: por cada producto vendido en esos
+       pedidos, se usa el costo MÁS RECIENTE cargado en "promociones.costo"
+       (que se va actualizando con cada factura de compra).
+     - Gastos: lo cargado en "gastos" en el mismo rango de fechas.
+     Ganancia Neta = Ingresos - Costo de mercadería vendida - Gastos
+
+   ⚠️ REQUIERE que la tabla "promociones" tenga una columna "costo" numeric.
+   Si no existe, ejecutar una vez en el SQL editor de Supabase:
+       alter table promociones add column costo numeric default 0;
+   Los productos que todavía no tengan costo cargado (por ejemplo, porque se
+   priorizó actualizar el stock al cargar la factura) se muestran igual en el
+   detalle, pero con costo $0 y una advertencia, para que se sepa que el
+   cálculo de ganancia de ese período puede estar subestimando el costo real.
+   ========================================================= */
+
+function initGananciaNetaSection() {
+    const desdeInput = document.getElementById('gananciaDesde');
+    const hastaInput = document.getElementById('gananciaHasta');
+    if (desdeInput && !desdeInput.value) {
+        const hoy = new Date();
+        const primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+        desdeInput.value = primerDiaMes.toISOString().split('T')[0];
+    }
+    if (hastaInput && !hastaInput.value) {
+        hastaInput.value = new Date().toISOString().split('T')[0];
+    }
+}
+
+async function calcularGananciaNeta() {
+    const desde = document.getElementById('gananciaDesde').value;
+    const hasta = document.getElementById('gananciaHasta').value;
+
+    if (!desde || !hasta) {
+        alert('Selecciona un rango de fechas.');
+        return;
+    }
+
+    const resultadoDiv = document.getElementById('gananciaNetaResultado');
+    resultadoDiv.style.display = 'block';
+    document.getElementById('gananciaDetalleProductos').innerHTML = '<tr><td colspan="7" style="text-align:center; padding:15px;">Calculando...</td></tr>';
+
+    try {
+        // El filtro "hasta" se hace inclusivo de todo ese día, ya que created_at
+        // es un timestamp completo y "hasta" viene como fecha (YYYY-MM-DD).
+        const hastaFinDia = `${hasta}T23:59:59.999`;
+
+        // 1️⃣ Traer los pedidos del rango (paginado, por si hay más de 1000)
+        const PAGE_SIZE = 1000;
+        let pedidos = [];
+        let from = 0;
+        while (true) {
+            const { data: page, error } = await supabase
+                .from('pedidos')
+                .select('id, created_at, total, productos')
+                .gte('created_at', `${desde}T00:00:00`)
+                .lte('created_at', hastaFinDia)
+                .range(from, from + PAGE_SIZE - 1);
+
+            if (error) throw error;
+            if (!page || page.length === 0) break;
+            pedidos = pedidos.concat(page);
+            if (page.length < PAGE_SIZE) break;
+            from += PAGE_SIZE;
+        }
+
+        // 2️⃣ Traer los gastos del rango
+        const { data: gastos, error: errGastos } = await supabase
+            .from('gastos')
+            .select('monto, fecha')
+            .gte('fecha', desde)
+            .lte('fecha', hasta);
+
+        if (errGastos) throw errGastos;
+
+        const totalGastos = (gastos || []).reduce((acc, g) => acc + (parseFloat(g.monto) || 0), 0);
+
+        // 3️⃣ Acumular, por producto, cantidad vendida e ingresos (según lo
+        //    facturado en cada pedido).
+        //
+        //    ⚠️ Algunos pedidos NO corresponden a una venta real de mercadería:
+        //    por ejemplo, cuando desde index_tienda se le cobra a un cliente un
+        //    saldo anterior sin venderle nada nuevo, se genera un ítem "de
+        //    relleno" (ej. id "VISITA_999") que NO es el id numérico de un
+        //    producto real de la tabla "promociones". Esos ítems se separan del
+        //    cálculo de venta de mercadería (no tienen costo ni son stock que
+        //    haya salido), para no romper la consulta de costos ni inflar el
+        //    cálculo de ganancia por productos.
+        const productosVendidos = {}; // id -> { nombre, cantidad, ingreso }
+        let ingresosProductos = 0;
+        let ingresosEspeciales = 0; // cobros de saldo anterior u otros ítems sin producto real
+
+        const esIdProductoReal = (id) => id != null && /^\d+$/.test(String(id).trim());
+
+        pedidos.forEach(p => {
+            let items = [];
+            try {
+                items = Array.isArray(p.productos) ? p.productos : JSON.parse(p.productos || '[]');
+            } catch (e) {
+                items = [];
+            }
+            items.forEach(it => {
+                const cantidad = Number(it.cantidad) || 0;
+                const precio = Number(it.precio) || 0;
+                const ingreso = cantidad * precio;
+
+                if (!esIdProductoReal(it.id)) {
+                    // Ítem especial (cobro de saldo anterior, ajuste manual, etc.):
+                    // se contabiliza aparte, no se mezcla con venta de mercadería.
+                    ingresosEspeciales += ingreso;
+                    return;
+                }
+
+                ingresosProductos += ingreso;
+
+                const key = String(it.id);
+                if (!productosVendidos[key]) {
+                    productosVendidos[key] = { id: it.id, nombre: it.nombre || 'Producto sin nombre', cantidad: 0, ingreso: 0 };
+                }
+                productosVendidos[key].cantidad += cantidad;
+                productosVendidos[key].ingreso += ingreso;
+            });
+        });
+
+        // 4️⃣ Traer el costo ACTUAL de cada producto vendido (el que se fue
+        //    actualizando con cada factura de compra). Solo se consultan ids
+        //    numéricos reales, para no romper la consulta a "promociones"
+        //    (columna bigint) con ids especiales tipo "VISITA_999".
+        const idsProductos = Object.values(productosVendidos).map(p => p.id);
+
+        let costosPorProducto = {};
+        if (idsProductos.length > 0) {
+            const { data: prods, error: errProds } = await supabase
+                .from('promociones')
+                .select('id, costo')
+                .in('id', idsProductos);
+
+            if (errProds && !/column .*costo.* does not exist/i.test(errProds.message || '')) {
+                throw errProds;
+            }
+            (prods || []).forEach(p => { costosPorProducto[String(p.id)] = Number(p.costo) || 0; });
+        }
+
+        // 5️⃣ Calcular costo de mercadería vendida y armar el detalle
+        let costoTotalMercaderia = 0;
+        let hayProductosSinCosto = false;
+
+        const filas = Object.values(productosVendidos)
+            .sort((a, b) => b.ingreso - a.ingreso)
+            .map(p => {
+                const costoUnitario = costosPorProducto[String(p.id)] || 0;
+                if (costoUnitario <= 0) hayProductosSinCosto = true;
+                const costoTotalProducto = costoUnitario * p.cantidad;
+                costoTotalMercaderia += costoTotalProducto;
+                const precioVentaProm = p.cantidad > 0 ? (p.ingreso / p.cantidad) : 0;
+                const gananciaProducto = p.ingreso - costoTotalProducto;
+
+                return `
+                    <tr style="border-bottom:1px solid #eee; ${costoUnitario <= 0 ? 'background:#fffbeb;' : ''}">
+                        <td style="padding:8px;">${escapeHtml(p.nombre)}${costoUnitario <= 0 ? ' <span title="Sin costo cargado" style="color:#d97706;">⚠️</span>' : ''}</td>
+                        <td style="padding:8px; text-align:right;">${p.cantidad}</td>
+                        <td style="padding:8px; text-align:right;">$${precioVentaProm.toLocaleString('es-AR', {maximumFractionDigits:2})}</td>
+                        <td style="padding:8px; text-align:right;">${costoUnitario > 0 ? '$' + costoUnitario.toLocaleString('es-AR') : '<span style="color:#d97706;">sin costo</span>'}</td>
+                        <td style="padding:8px; text-align:right;">$${p.ingreso.toLocaleString('es-AR')}</td>
+                        <td style="padding:8px; text-align:right;">$${costoTotalProducto.toLocaleString('es-AR')}</td>
+                        <td style="padding:8px; text-align:right; font-weight:bold; color:${gananciaProducto >= 0 ? '#166534' : '#dc2626'};">$${gananciaProducto.toLocaleString('es-AR')}</td>
+                    </tr>
+                `;
+            }).join('');
+
+        document.getElementById('gananciaDetalleProductos').innerHTML =
+            filas || '<tr><td colspan="7" style="text-align:center; padding:15px; color:#888;">No hay ventas de productos en este rango de fechas.</td></tr>';
+
+        const gananciaNeta = ingresosProductos - costoTotalMercaderia - totalGastos;
+
+        document.getElementById('gananciaIngresos').textContent = `$${ingresosProductos.toLocaleString('es-AR')}`;
+        document.getElementById('gananciaCosto').textContent = `$${costoTotalMercaderia.toLocaleString('es-AR')}`;
+        document.getElementById('gananciaGastos').textContent = `$${totalGastos.toLocaleString('es-AR')}`;
+
+        const netoEl = document.getElementById('gananciaNetaTotal');
+        netoEl.textContent = `$${gananciaNeta.toLocaleString('es-AR')}`;
+        netoEl.style.color = gananciaNeta >= 0 ? '#166534' : '#dc2626';
+        document.getElementById('gananciaNetaCard').style.background = gananciaNeta >= 0 ? '#eef2ff' : '#fef2f2';
+
+        const avisoDiv = document.getElementById('gananciaAvisoCostos');
+        let avisoHtml = '';
+        if (hayProductosSinCosto) {
+            avisoHtml += '⚠️ Algunos productos vendidos en este período todavía no tienen costo cargado (aparecen marcados en la tabla). Mientras no se les cargue el costo en una factura de Compras, el costo de mercadería vendida —y por lo tanto la ganancia neta— está subestimado.';
+        }
+        if (ingresosEspeciales > 0) {
+            if (avisoHtml) avisoHtml += '<br><br>';
+            avisoHtml += `ℹ️ Además, se detectaron $${ingresosEspeciales.toLocaleString('es-AR')} en pedidos que corresponden a cobros de saldo anterior (u otros ítems sin producto real asociado, cargados desde index_tienda), sin venta de mercadería nueva. Ese monto NO se incluyó en "Ingresos" ni en el detalle de productos de este reporte, porque no representa una venta de este período.`;
+        }
+        if (avisoHtml) {
+            avisoDiv.style.display = 'block';
+            avisoDiv.innerHTML = avisoHtml;
+        } else {
+            avisoDiv.style.display = 'none';
+        }
+
+    } catch (err) {
+        console.error('Error al calcular la ganancia neta:', err);
+        if (/column .*costo.* does not exist/i.test(err.message || '')) {
+            alert('Falta la columna "costo" en la tabla "promociones" de Supabase.\n\nEjecutá una sola vez en el SQL editor de Supabase:\n\nalter table promociones add column costo numeric default 0;');
+        } else {
+            alert('Error al calcular la ganancia neta: ' + err.message);
+        }
+        document.getElementById('gananciaDetalleProductos').innerHTML = '<tr><td colspan="7" style="text-align:center; padding:15px; color:#dc2626;">Error al calcular.</td></tr>';
+    }
+}
 
 
 
@@ -10264,7 +10824,7 @@ async function guardarCompra() {
 <div id="modalCompra" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:20500; justify-content:center; align-items:center; backdrop-filter: blur(2px);">
     <div style="background:white; width:95%; max-width:800px; max-height:92vh; overflow-y:auto; border-radius:16px; padding:25px; box-shadow: var(--shadow-md); position:relative;">
         <span onclick="cerrarModalCompra()" style="position:absolute; right:20px; top:15px; cursor:pointer; font-size:28px; color:#666;">&times;</span>
-        <h2 style="margin-top:0; color:var(--secondary);">🧾 Nueva Factura de Compra</h2>
+        <h2 id="modalCompraTitulo" style="margin-top:0; color:var(--secondary);">🧾 Nueva Factura de Compra</h2>
 
         <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:15px;">
             <div style="flex:1; min-width:150px;">
@@ -10352,7 +10912,7 @@ async function guardarCompra() {
 
         <div style="display:flex; gap:10px; justify-content:flex-end;">
             <button onclick="cerrarModalCompra()" style="flex:1; max-width:150px; background:#f1f5f9; color:#475569; border:none; padding:12px; border-radius:10px; cursor:pointer; font-weight:600;">Cancelar</button>
-            <button onclick="guardarCompra()" style="flex:1; max-width:250px; background:#6366f1; color:white; border:none; padding:12px; border-radius:10px; cursor:pointer; font-weight:600;">💾 Guardar Factura</button>
+            <button id="modalCompraBtnGuardar" onclick="guardarCompra()" style="flex:1; max-width:250px; background:#6366f1; color:white; border:none; padding:12px; border-radius:10px; cursor:pointer; font-weight:600;">💾 Guardar Factura</button>
         </div>
     </div>
 </div>

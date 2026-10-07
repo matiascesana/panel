@@ -2819,12 +2819,24 @@ function showToast(text, tiempo = 2200) {
     clearTimeout(toast._to);
     toast._to = setTimeout(() => { toast.style.opacity = '0'; }, tiempo);
 }
+function resetModalInner() {
+    const inner = document.getElementById('modalInner');
+    const modal = document.getElementById('modal');
+    if (inner.dataset.baseStyle === undefined) inner.dataset.baseStyle = inner.getAttribute('style') || '';
+    inner.className = '';
+    inner.setAttribute('style', inner.dataset.baseStyle);
+    modal.classList.remove('edit-sheet-open');
+}
 function openModal(innerHtml) {
     const inner = document.getElementById('modalInner');
+    resetModalInner();
     inner.innerHTML = innerHtml;
     document.getElementById('modal').style.display = 'flex';
 }
-function closeModal(){ document.getElementById('modal').style.display = 'none'; }
+function closeModal(){
+    document.getElementById('modal').style.display = 'none';
+    resetModalInner();
+}
 
 /* =========================================================
    Sidebar & Navegación entre secciones
@@ -4826,7 +4838,8 @@ let prodHTML = '<ul style="margin:7px 0 10px 0;padding-left:22px;font-size:15px;
 if (Array.isArray(p.productos)) {
     // Formato manual (Panel Admin)
     p.productos.forEach(pr => {
-        prodHTML += `<li>${safeText(pr.nombre)} x ${pr.cantidad} <span style="color:#3498db;">$${(pr.precio * pr.cantidad).toFixed(2)}</span></li>`;
+        const subLinea = pr.precio * pr.cantidad * (1 - (parseFloat(pr.descuento) || 0) / 100);
+        prodHTML += `<li>${safeText(pr.nombre)} x ${pr.cantidad} ${descuentoLineaTag(pr)} <span style="color:#3498db;">$${subLinea.toFixed(2)}</span></li>`;
     });
 } else if (typeof p.productos === 'string' && p.productos.trim() !== "") {
     // Formato Tienda Online (Texto plano)
@@ -4870,13 +4883,16 @@ if (Array.isArray(p.pagos) && p.pagos.length > 0) {
     pagosHTML = `<div style="margin-top:8px; color:#888; font-size:0.9em; font-style:italic;">No hay pagos registrados.</div>`;
 }
 
+const dInfo = descuentoPedidoInfo(p);
 infoDiv.innerHTML = `
-    <div style="display: flex; align-items: baseline; gap: 10px;">
+    <div style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;">
         <strong style="font-size: 1.1em;">${safeText(p.cliente)}</strong>
         <span style="color: #7f8c8d; font-size: 0.85em;">(${fechaPedido})</span>
     </div>
-    <div style="color:#888; margin-bottom:2px; font-size: 0.9em;">Localidad: ${safeText(localidadPedido)}</div>
+    <div style="color:#888; margin-bottom:4px; font-size: 0.9em;">Localidad: ${safeText(localidadPedido)}</div>
+    <div style="margin-bottom:2px;">${descuentoBadgeHTML(dInfo)}</div>
     ${prodHTML}
+    ${descuentoResumenHTML(dInfo)}
     <div style="margin-top:8px;font-weight:bold;">Total: <span style="color:#ff4d4f;">$${montoTotal.toLocaleString()}</span></div>
     ${pagosHTML}
 `;
@@ -5402,8 +5418,8 @@ async function fetchArchivedOrders() {
             // Productos
             let prodHTML = '<ul style="margin:7px 0 10px 0;padding-left:22px;font-size:15px;">';
             (Array.isArray(p.productos) ? p.productos : []).forEach(pr => { 
-                const subtotalProd = Number(pr.precio || 0) * Number(pr.cantidad || 0);
-                prodHTML += `<li>${safeText(pr.nombre)} x ${pr.cantidad} <span style="color:#3498db;">$${subtotalProd.toFixed(2)}</span></li>`;
+                const subtotalProd = Number(pr.precio || 0) * Number(pr.cantidad || 0) * (1 - (parseFloat(pr.descuento) || 0) / 100);
+                prodHTML += `<li>${safeText(pr.nombre)} x ${pr.cantidad} ${descuentoLineaTag(pr)} <span style="color:#3498db;">$${subtotalProd.toFixed(2)}</span></li>`;
             }); 
             prodHTML += "</ul>";
 
@@ -5428,12 +5444,14 @@ async function fetchArchivedOrders() {
             }
 
             const estadoTexto = p.estado === 'Completado' ? '✅ Completado' : (saldoPendiente > 0 ? '⚠️ Pendiente de Pago' : '⏳ Pendiente');
+            const dInfoArch = descuentoPedidoInfo(p);
             
             div.innerHTML = ` 
                 <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                     <div>
                         <strong>Pedido #${p.id} - ${safeText(p.cliente)}</strong> 
-                        <div style="color:#888;margin-bottom:2px;">Localidad: ${safeText(localidad)}</div>
+                        <div style="color:#888;margin-bottom:4px;">Localidad: ${safeText(localidad)}</div>
+                        <div>${descuentoBadgeHTML(dInfoArch)}</div>
                     </div>
                     <div style="text-align:right;">
                         <span style="font-weight:bold; font-size:1.2em; color:#2c3e50;">Total: $${totalPedido.toFixed(2)}</span>
@@ -5441,6 +5459,7 @@ async function fetchArchivedOrders() {
                     </div>
                 </div>
                 ${prodHTML} 
+                ${descuentoResumenHTML(dInfoArch)}
                 ${pagosHTML}
                 <div style="margin-top:10px; border-top:1px solid #ddd; padding-top:10px; display:flex; justify-content:flex-end; gap: 10px;">
                     <button onclick='unarchiveOrder(${p.id})' style="padding: 6px 12px; background: #27ae60; color: white; border: none; border-radius: 6px; cursor:pointer;">
@@ -6319,310 +6338,504 @@ function cerrarModalPago() {
 
 
 /* ========== MODAL DE EDICIÓN DE PEDIDO CON VALIDACIÓN MANUAL Y MEJORA VISUAL ========== */
+/* ===== Helpers de descuentos en pedidos ===== */
+function fmtARS(n) {
+    return Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Resume los descuentos de un pedido (los aplicados en index tienda o en el panel)
+function descuentoPedidoInfo(p) {
+    const items = Array.isArray(p.productos) ? p.productos : [];
+    let pctGeneral = Math.max(0, parseFloat(p.descuento_general) || 0);
+    const hayLinea = items.some(pr => (parseFloat(pr.descuento) || 0) > 0);
+    const bruto = items.reduce((s, pr) => s + (Number(pr.precio) || 0) * (Number(pr.cantidad) || 0), 0);
+    const total = Number(p.total) || 0;
+    let implicito = false;
+    // Pedidos viejos de la tienda: el total ya venía con descuento pero no se guardaba el %.
+    if (pctGeneral === 0 && !hayLinea && bruto > 0 && (bruto - total) >= 1) {
+        pctGeneral = +(((bruto - total) / bruto) * 100).toFixed(2);
+        implicito = true;
+    }
+    const tiene = pctGeneral > 0 || hayLinea;
+    const ahorro = (tiene && bruto > 0) ? Math.max(0, bruto - total) : 0;
+    return { pctGeneral, hayLinea, implicito, bruto, total, ahorro, tiene };
+}
+
+function descuentoBadgeHTML(info) {
+    const base = 'display:inline-block;padding:3px 10px;border-radius:999px;font-size:0.8em;font-weight:700;';
+    if (!info.tiene) {
+        return `<span style="${base}background:#f1f5f9;color:#94a3b8;border:1px solid #e2e8f0;">Sin descuento</span>`;
+    }
+    const pct = String(+info.pctGeneral.toFixed(2));
+    let txt;
+    if (info.pctGeneral > 0 && info.hayLinea) txt = `Descuento ${pct}% + por producto`;
+    else if (info.pctGeneral > 0) txt = `${info.implicito ? 'Descuento ≈ ' : 'Descuento '}${pct}%`;
+    else txt = 'Descuento por producto';
+    return `<span style="${base}background:#fff4e5;color:#b45309;border:1px solid #fdba74;">🏷️ ${txt}</span>`;
+}
+
+function descuentoResumenHTML(info) {
+    if (!info.tiene || !info.bruto || info.ahorro <= 0) return '';
+    return `<div style="margin-top:6px;font-size:0.85em;color:#64748b;">Subtotal $${fmtARS(info.bruto)} · <span style="color:#b45309;font-weight:600;">Descuento −$${fmtARS(info.ahorro)}</span></div>`;
+}
+
+function descuentoLineaTag(pr) {
+    const d = parseFloat(pr.descuento) || 0;
+    return d > 0 ? `<span style="background:#fff4e5;color:#b45309;border-radius:4px;padding:1px 6px;font-size:0.8em;font-weight:700;">-${+d.toFixed(2)}%</span>` : '';
+}
+
+/* Estilos de la hoja de edición de pedido (pensada para celular) */
+function asegurarEstilosEdicionPedido() {
+    if (document.getElementById('editSheetStyles')) return;
+    const st = document.createElement('style');
+    st.id = 'editSheetStyles';
+    st.textContent = `
+    #modal.edit-sheet-open { height: 100vh; height: 100dvh; }
+    #modal.edit-sheet-open > button { display: none !important; }
+    #modalInner.edit-sheet { padding: 0 !important; width: min(100%, 560px) !important; max-width: 560px !important;
+        height: min(92vh, 860px); max-height: 92vh !important; display: flex; flex-direction: column;
+        overflow: hidden !important; border-radius: 16px !important; background: #f4f6f9 !important; }
+    @media (max-width: 640px) {
+        #modalInner.edit-sheet { width: 100% !important; max-width: 100% !important; height: 100vh; height: 100dvh;
+            max-height: 100dvh !important; border-radius: 0 !important; }
+    }
+    .eo-head { flex: none; display: flex; align-items: center; gap: 10px; background: #fff; border-bottom: 1px solid #e5e9ef;
+        padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); }
+    .eo-head h2 { margin: 0; font-size: 1.1rem; color: #1f2d3d; line-height: 1.2; }
+    .eo-head small { color: #7f8c8d; font-size: .8rem; }
+    .eo-x { margin: 0 0 0 auto; flex: none; width: 44px; height: 44px; padding: 0; border-radius: 50%; border: none;
+        background: #eef1f5; color: #334155; font-size: 18px; cursor: pointer; }
+    .eo-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 12px; }
+    .eo-card { background: #fff; border: 1px solid #e5e9ef; border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+    .eo-card h3 { margin: 0 0 10px; font-size: .95rem; color: #2c3e50; }
+    .eo-field { margin-bottom: 12px; } .eo-field:last-child { margin-bottom: 0; }
+    .eo-label { display: block; font-weight: 600; font-size: .85rem; color: #475569; margin: 0 0 6px; }
+    .eo-input { width: 100%; box-sizing: border-box; height: 46px; padding: 0 12px; font-size: 16px; margin: 0;
+        border: 1.5px solid #d5dbe3; border-radius: 10px; background: #fff; color: #1f2d3d; }
+    .eo-input:focus { outline: none; border-color: #3498db; box-shadow: 0 0 0 3px rgba(52,152,219,.18); }
+    .eo-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 640px) { .eo-grid2 { grid-template-columns: 1fr; } }
+    .eo-add { width: 100%; height: 50px; margin: 0 0 12px; border: 2px dashed #3498db; background: #eef6fd; color: #1d6fa5;
+        border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; padding: 0; }
+    .eo-item { border: 1px solid #e5e9ef; border-radius: 12px; padding: 12px; margin-bottom: 10px; background: #fff; }
+    .eo-item-top { display: flex; gap: 8px; align-items: flex-start; }
+    .eo-item-name { flex: 1; font-weight: 700; color: #1f2d3d; line-height: 1.3; word-break: break-word; }
+    .eo-item-name small { display: block; font-weight: 400; color: #64748b; font-size: .82rem; margin-top: 2px; }
+    .eo-del { flex: none; width: 42px; height: 42px; margin: 0; padding: 0; border-radius: 10px; border: 1px solid #f5c2c4;
+        background: #fff5f5; color: #e03131; font-size: 18px; cursor: pointer; }
+    .eo-item-ctrl { display: flex; align-items: flex-end; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+    .eo-mini { display: block; font-size: .72rem; color: #64748b; margin-bottom: 3px; }
+    .eo-stepper { display: flex; align-items: center; gap: 6px; }
+    .eo-step { width: 46px; height: 46px; margin: 0; padding: 0; border-radius: 12px; border: 1.5px solid #cfd6df; background: #fff;
+        color: #2c3e50; font-size: 24px; font-weight: 700; line-height: 1; cursor: pointer; touch-action: manipulation; }
+    .eo-step:active { background: #e8f1fa; }
+    .eo-qty { width: 60px; text-align: center; font-size: 18px; font-weight: 700; padding: 0 4px; }
+    .eo-disc { width: 84px; text-align: center; }
+    .eo-item-sum { margin-left: auto; text-align: right; }
+    .eo-old { display: none; text-decoration: line-through; color: #94a3b8; font-size: .8rem; }
+    .eo-item-total { display: block; font-weight: 800; color: #2980b9; font-size: 1.1rem; }
+    .eo-stock { font-size: .78rem; color: #94a3b8; margin-top: 8px; }
+    .eo-stock.warn { color: #d9480f; font-weight: 700; }
+    .eo-empty { text-align: center; color: #94a3b8; padding: 14px 0; font-size: .9rem; }
+    .eo-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .eo-chip { height: 42px; min-width: 58px; margin: 0; padding: 0 14px; border-radius: 21px; border: 1.5px solid #cfd6df;
+        background: #fff; color: #334155; font-size: 15px; font-weight: 700; cursor: pointer; }
+    .eo-chip.on { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+    .eo-foot { flex: none; background: #fff; border-top: 1px solid #e5e9ef; box-shadow: 0 -4px 14px rgba(0,0,0,.06);
+        padding: 10px 14px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+    .eo-sum { font-size: .88rem; color: #475569; }
+    .eo-sum-row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .eo-sum-row.dsc { color: #b45309; font-weight: 600; }
+    .eo-sum-total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; padding-top: 6px; border-top: 1px dashed #d5dbe3; }
+    .eo-sum-total b { font-size: 1rem; color: #1f2d3d; }
+    .eo-sum-total span { font-size: 1.5rem; font-weight: 800; color: #e03131; }
+    .eo-save { width: 100%; height: 52px; margin: 10px 0 0; padding: 0; border: none; border-radius: 12px; background: #27ae60;
+        color: #fff; font-size: 17px; font-weight: 800; cursor: pointer; }
+    .eo-save:disabled { background: #94a3b8; }
+    .eo-prod-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eef1f5; }
+    .eo-prod-row b { font-size: .95rem; color: #1f2d3d; }
+    .eo-prod-row small { display: block; color: #64748b; font-size: .8rem; margin-top: 2px; }
+    .eo-prod-add { flex: none; height: 44px; min-width: 96px; margin: 0; padding: 0 12px; border: none; border-radius: 10px;
+        background: #2ecc71; color: #fff; font-weight: 700; font-size: 14px; cursor: pointer; }
+    .eo-prod-add:disabled { background: #e2e8f0; color: #64748b; }
+    `;
+    document.head.appendChild(st);
+}
+
 async function editOrderModal(pedido) {
-    const { data: localidades } = await supabase.from('localidades').select('*').order('id');
-    const { data: productosDB } = await supabase.from('promociones').select('*').order('id');
-    const { data: categorias } = await supabase.from('categorias').select('*').order('id');
+    asegurarEstilosEdicionPedido();
+
+    const [locRes, prodRes, catRes] = await Promise.all([
+        supabase.from('localidades').select('*').order('id'),
+        supabase.from('promociones').select('*').order('id'),
+        supabase.from('categorias').select('*').order('id')
+    ]);
+    const localidades = locRes.data || [];
+    const productosDB = prodRes.data || [];
+    const categorias = catRes.data || [];
 
     // Clonamos los productos del pedido para edición y garantizamos campo descuento
     let productosPedido = (pedido.productos || []).map(pr => ({ ...pr, descuento: pr.descuento || 0 }));
-    // Variable persistente dentro del modal para el descuento general
-    let descuentoGeneral = typeof pedido.descuento_general !== 'undefined' ? pedido.descuento_general : 0;
+    // Descuento general (viene de index tienda o del panel). Si es null en la BD, es 0.
+    let descuentoGeneral = Math.min(100, Math.max(0, parseFloat(pedido.descuento_general) || 0));
+    // Datos del cliente: se guardan aparte para no perderlos cuando se vuelve a dibujar el modal
+    const form = { cliente: pedido.cliente || '', dni: pedido.dni || '', localidad: pedido.localidad_id ?? '' };
+    let dirty = false;
 
-    function renderModal(stockMsg = "", scrollPos = 0) {
-        const modalInner = document.getElementById("modalInner");
-        modalInner.style.maxWidth = "min(90vw, 500px)"; 
-        modalInner.style.width = "90vw";
-        modalInner.style.zIndex = "1000"; // Asegura prioridad
-        
-        // Aplicamos una animación de entrada suave al contenedor
-        modalInner.style.animation = "modalFadeIn 0.3s ease-out";
+    const stockBaseOf = (pr) => {
+        const info = productosDB.find(pdb => pdb.id == pr.id);
+        const orig = (pedido.productos || []).find(op => op.id == pr.id)?.cantidad || 0;
+        return (info ? (info.stock ?? 0) : 0) + orig;
+    };
 
-        // Lista de productos en el pedido
-        let listaHTML = `<ul id="productosPedidoList" style="margin-bottom:8px; padding:0; list-style:none;">`;
-        productosPedido.forEach((pr, idx) => {
-            const prodInfo = productosDB.find(pdb => pdb.id === pr.id);
-            const stockActualDB = prodInfo ? (prodInfo.stock ?? 0) : 0;
-            const stockOriginal = (pedido.productos || []).find(op => op.id === pr.id)?.cantidad || 0;
-            const stockBase = stockActualDB + stockOriginal;
+    function calcTotales() {
+        const bruto = productosPedido.reduce((s, p) => s + (Number(p.precio) || 0) * (Number(p.cantidad) || 0), 0);
+        const subtotal = productosPedido.reduce((s, p) =>
+            s + (Number(p.precio) || 0) * (Number(p.cantidad) || 0) * (1 - (Number(p.descuento) || 0) / 100), 0);
+        const total = subtotal * (1 - descuentoGeneral / 100);
+        return { bruto, descLineas: bruto - subtotal, subtotal, descGeneral: subtotal - total, total };
+    }
 
-            listaHTML += `
-                <li style="margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#fafafa; padding:10px; border-radius:10px; border:1px solid #eee; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                    <span style="font-weight:bold; flex:1; min-width:120px;">${safeText(pr.nombre)}</span>
-                    <div style="display:flex; align-items:center; gap:6px;">
-                        <button class="qtyMinus" data-idx="${idx}" style="background:#fff; border:1px solid #ddd; border-radius:50%; width:28px; height:28px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:0.2s;">−</button>
-                        <input type="number" min="1" max="${stockBase}" value="${pr.cantidad}" data-idx="${idx}" class="editQtyInput" style="width:45px; text-align:center; border:1px solid #ddd; border-radius:4px; padding:3px 0;">
-                        <button class="qtyPlus" data-idx="${idx}" style="background:#fff; border:1px solid #ddd; border-radius:50%; width:28px; height:28px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:0.2s;">+</button>
-                        <input type="number" min="0" max="100" value="${pr.descuento || 0}" 
-                               class="editDescuentoInput" data-idx="${idx}" style="width:50px; text-align:center; border:1px solid #ddd; border-radius:4px; padding:3px 0;" placeholder="% Desc">
-                    </div>
-                    <div style="width:100%; display:flex; justify-content:space-between; align-items:center; margin-top:5px;">
-                        <span style="color:#888; font-size:0.85em;">(stock: ${stockBase})</span>
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <span style="color:#3498db; font-weight:bold;">$${(pr.precio * pr.cantidad * (1 - (pr.descuento || 0)/100)).toFixed(2)}</span>
-                            <button type="button" class="deletePrBtn" data-idx="${idx}" style="background:#ff4d4f; color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:12px;">🗑️</button>
-                        </div>
-                    </div>
-                </li>
-            `;
+    function sumHTML() {
+        const t = calcTotales();
+        const hayDesc = t.descLineas > 0.004 || t.descGeneral > 0.004;
+        let h = '';
+        if (hayDesc) {
+            h += `<div class="eo-sum-row"><span>Subtotal</span><span>$${fmtARS(t.bruto)}</span></div>`;
+            if (t.descLineas > 0.004) h += `<div class="eo-sum-row dsc"><span>Descuento por producto</span><span>−$${fmtARS(t.descLineas)}</span></div>`;
+            if (t.descGeneral > 0.004) h += `<div class="eo-sum-row dsc"><span>Descuento general (${+descuentoGeneral.toFixed(2)}%)</span><span>−$${fmtARS(t.descGeneral)}</span></div>`;
+        }
+        h += `<div class="eo-sum-total"><b>TOTAL</b><span>$${fmtARS(t.total)}</span></div>`;
+        return h;
+    }
+
+    function refreshTotals() {
+        const el = document.getElementById('eoSum');
+        if (el) el.innerHTML = sumHTML();
+    }
+
+    function refreshChips() {
+        document.querySelectorAll('.eo-chip').forEach(c => {
+            c.classList.toggle('on', parseFloat(c.dataset.v) === descuentoGeneral);
         });
-        listaHTML += `</ul>`;
+    }
 
-        const totalSinDescuento = productosPedido.reduce((s, p) =>
-            s + p.precio * p.cantidad * (1 - (p.descuento || 0) / 100), 0
-        );
-        const totalConDescuento = totalSinDescuento * (1 - (descuentoGeneral || 0) / 100);
+    function refreshItem(idx, msg = '') {
+        const el = document.querySelector(`.eo-item[data-idx="${idx}"]`);
+        const pr = productosPedido[idx];
+        if (!el || !pr) return;
+        const precio = Number(pr.precio) || 0, cant = Number(pr.cantidad) || 0, d = Number(pr.descuento) || 0;
+        const bruto = precio * cant, neto = bruto * (1 - d / 100);
+        const q = el.querySelector('.eo-qty');
+        if (q) q.value = cant;
+        const old = el.querySelector('.eo-old');
+        if (old) { old.style.display = d > 0 ? 'block' : 'none'; old.textContent = `$${fmtARS(bruto)}`; }
+        const tot = el.querySelector('.eo-item-total');
+        if (tot) tot.textContent = `$${fmtARS(neto)}`;
+        const stock = el.querySelector('.eo-stock');
+        if (stock) {
+            const base = stockBaseOf(pr), max = Math.max(base, 1);
+            if (msg) { stock.textContent = msg; stock.classList.add('warn'); }
+            else if (cant >= max) { stock.textContent = `Stock máximo alcanzado (${max})`; stock.classList.add('warn'); }
+            else { stock.textContent = `Disponible para este pedido: ${base}`; stock.classList.remove('warn'); }
+        }
+    }
+
+    function setQty(idx, val) {
+        const pr = productosPedido[idx];
+        if (!pr) return;
+        const max = Math.max(stockBaseOf(pr), 1);
+        let n = Math.floor(Number(val));
+        if (!isFinite(n) || n < 1) n = 1;
+        let msg = '';
+        if (n > max) { n = max; msg = `Stock máximo alcanzado (${max})`; }
+        pr.cantidad = n;
+        dirty = true;
+        refreshItem(idx, msg);
+        refreshTotals();
+    }
+
+    function itemHTML(pr, idx) {
+        const base = stockBaseOf(pr), max = Math.max(base, 1);
+        const precio = Number(pr.precio) || 0, cant = Number(pr.cantidad) || 0, d = Number(pr.descuento) || 0;
+        const bruto = precio * cant, neto = bruto * (1 - d / 100);
+        const atMax = cant >= max;
+        return `
+        <div class="eo-item" data-idx="${idx}">
+            <div class="eo-item-top">
+                <div class="eo-item-name">${safeText(pr.nombre)}<small>$${fmtARS(precio)} c/u</small></div>
+                <button type="button" class="eo-del" data-idx="${idx}" aria-label="Quitar producto">🗑️</button>
+            </div>
+            <div class="eo-item-ctrl">
+                <div>
+                    <span class="eo-mini">Cantidad</span>
+                    <div class="eo-stepper">
+                        <button type="button" class="eo-step" data-act="minus" data-idx="${idx}" aria-label="Restar">−</button>
+                        <input type="number" inputmode="numeric" min="1" max="${max}" value="${cant}" data-idx="${idx}" class="eo-input eo-qty" aria-label="Cantidad">
+                        <button type="button" class="eo-step" data-act="plus" data-idx="${idx}" aria-label="Sumar">+</button>
+                    </div>
+                </div>
+                <div>
+                    <span class="eo-mini">Desc. %</span>
+                    <input type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${d || ''}" placeholder="0" data-idx="${idx}" class="eo-input eo-disc" aria-label="Descuento del producto en porcentaje">
+                </div>
+                <div class="eo-item-sum">
+                    <span class="eo-old" style="display:${d > 0 ? 'block' : 'none'};">$${fmtARS(bruto)}</span>
+                    <span class="eo-item-total">$${fmtARS(neto)}</span>
+                </div>
+            </div>
+            <div class="eo-stock ${atMax ? 'warn' : ''}">${atMax ? `Stock máximo alcanzado (${max})` : `Disponible para este pedido: ${base}`}</div>
+        </div>`;
+    }
+
+    function cerrarEdicion() {
+        if (dirty && !confirm('Tenés cambios sin guardar. ¿Cerrar igual?')) return;
+        closeModal();
+    }
+
+    function renderModal(scrollPos = null) {
+        const prevBody = document.querySelector('.eo-body');
+        if (scrollPos === null) scrollPos = prevBody ? prevBody.scrollTop : 0;
+
+        const chips = [0, 5, 10, 15, 20].map(v =>
+            `<button type="button" class="eo-chip ${v === descuentoGeneral ? 'on' : ''}" data-v="${v}">${v === 0 ? 'Sin desc.' : v + '%'}</button>`).join('');
 
         openModal(`
-            <style>
-                @keyframes modalFadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
-                .edit-modal-container::-webkit-scrollbar { width: 6px; }
-                .edit-modal-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 10px; }
-                .qtyPlus:hover, .qtyMinus:hover { background: #f0f0f0 !important; }
-            </style>
-            <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:18px;">
-                <h2 style="margin:0; font-size:1.4em; color:#2c3e50;">Editar Pedido</h2>
-                <p style="margin:4px 0 0; color:#7f8c8d; font-size:0.9em;">ID: ${pedido.id}</p>
+            <div class="eo-head">
+                <div>
+                    <h2>Editar pedido #${pedido.id}</h2>
+                    <small>${safeText(form.cliente || 'Sin nombre')}</small>
+                </div>
+                <button type="button" class="eo-x" id="eoCloseBtn" aria-label="Cerrar">✕</button>
             </div>
-            <div class="edit-modal-container" style="background:#fff; border-radius:15px; padding:5px; max-height:80vh; overflow-y:auto;">
-                <div style="margin-bottom:16px;">
-                    <label style="font-weight:600; display:block; margin-bottom:6px; font-size:0.9em; color:#34495e;">Cliente</label>
-                    <input type="text" id="editPedidoCliente" value="${safeText(pedido.cliente)}" placeholder="Nombre del cliente" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
-                </div>
-                <div style="margin-bottom:16px;">
-                    <label style="font-weight:600; display:block; margin-bottom:6px; font-size:0.9em; color:#34495e;">DNI</label>
-                    <input type="text" id="editPedidoDni" value="${safeText(pedido.dni || '')}" placeholder="Ingrese DNI" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
-                </div>
-                <div style="margin-bottom:16px;">
-                    <label style="font-weight:600; display:block; margin-bottom:6px; font-size:0.9em; color:#34495e;">Localidad</label>
-                    <select id="editPedidoLocalidad" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; background:white;">
-                        <option value="">Seleccione localidad</option>
-                        ${localidades.map(l => `<option value="${l.id}" ${l.id === pedido.localidad_id ? 'selected' : ''}>${safeText(l.nombre)}</option>`).join('')}
-                    </select>
-                </div>
-                
-                <div style="margin-bottom:16px; border-top: 1px solid #eee; pt:16px;">
-                    <label style="font-weight:600; display:block; margin:15px 0 8px; font-size:0.9em; color:#34495e;">Detalle de Productos</label>
-                    <button type="button" id="openProductSelector" style="width:100%; background:#f8f9fa; color:#2c3e50; border:1px dashed #cbd5e0; padding:12px; border-radius:8px; font-size:14px; font-weight:bold; cursor:pointer; margin-bottom:12px; transition:0.2s;">
-                        ➕ Agregar / Cambiar Productos
-                    </button>
-                    ${listaHTML}
+
+            <div class="eo-body">
+                <div class="eo-card">
+                    <h3>👤 Cliente</h3>
+                    <div class="eo-field">
+                        <label class="eo-label" for="editPedidoCliente">Nombre</label>
+                        <input type="text" id="editPedidoCliente" class="eo-input" value="${safeText(form.cliente)}" placeholder="Nombre del cliente" autocomplete="off">
+                    </div>
+                    <div class="eo-grid2">
+                        <div class="eo-field">
+                            <label class="eo-label" for="editPedidoDni">DNI</label>
+                            <input type="text" id="editPedidoDni" class="eo-input" inputmode="numeric" value="${safeText(form.dni)}" placeholder="Documento" autocomplete="off">
+                        </div>
+                        <div class="eo-field">
+                            <label class="eo-label" for="editPedidoLocalidad">Localidad</label>
+                            <select id="editPedidoLocalidad" class="eo-input">
+                                <option value="">Seleccione...</option>
+                                ${localidades.map(l => `<option value="${l.id}" ${String(l.id) === String(form.localidad) ? 'selected' : ''}>${safeText(l.nombre)}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
-                <div style="background:#fdfdfe; border:1px solid #edf2f7; border-radius:12px; padding:15px; margin-top:20px;">
-                    <div style="margin-bottom:12px;">
-                        <label style="font-weight:600; display:block; margin-bottom:6px; font-size:0.9em; color:#34495e;">Descuento general (%)</label>
-                        <input type="number" id="editDescuentoGeneral" value="${descuentoGeneral}" min="0" max="100" step="0.01"
-                               style="width:100%; padding:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
-                    </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
-                        <span style="font-weight:bold; font-size:1.1em; color:#2c3e50;">Total Final:</span>
-                        <span id="pedidoTotal" style="font-size:1.4em; font-weight:800; color:#e74c3c;">$${totalConDescuento.toFixed(2)}</span>
-                    </div>
+                <div class="eo-card">
+                    <h3>🛒 Productos (${productosPedido.length})</h3>
+                    <button type="button" class="eo-add" id="openProductSelector">➕ Agregar productos</button>
+                    ${productosPedido.length ? productosPedido.map(itemHTML).join('') : '<div class="eo-empty">El pedido no tiene productos</div>'}
                 </div>
-                ${stockMsg ? `<div style="color:#ff4d4f; font-weight:bold; margin-top:12px; font-size:0.85em; text-align:center;">⚠️ ${stockMsg}</div>` : ""}
-                
-                <button id="saveEditPedidoBtn" style="width:100%; margin-top:20px; background:#3498db; color:#fff; border:none; padding:14px; border-radius:10px; font-size:16px; font-weight:bold; cursor:pointer; box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);">
-                    💾 Guardar Cambios del Pedido
-                </button>
+
+                <div class="eo-card">
+                    <h3>🏷️ Descuento general</h3>
+                    <div class="eo-chips">${chips}</div>
+                    <label class="eo-label" for="editDescuentoGeneral">Otro porcentaje (%)</label>
+                    <input type="number" id="editDescuentoGeneral" class="eo-input" inputmode="decimal" min="0" max="100" step="0.01"
+                           value="${descuentoGeneral || ''}" placeholder="0">
+                </div>
+            </div>
+
+            <div class="eo-foot">
+                <div class="eo-sum" id="eoSum">${sumHTML()}</div>
+                <button type="button" class="eo-save" id="saveEditPedidoBtn">💾 Guardar cambios</button>
             </div>
         `);
 
-setTimeout(() => {
-    const container = document.querySelector(".edit-modal-container");
-    if (container) container.scrollTop = scrollPos;
-}, 0);
+        // Marcamos el modal como "hoja de edición" (pantalla completa en celular)
+        document.getElementById('modalInner').classList.add('edit-sheet');
+        document.getElementById('modal').classList.add('edit-sheet-open');
+        const body = document.querySelector('.eo-body');
+        if (body) body.scrollTop = scrollPos;
 
         // ---- EVENTOS ----
-        const descuentoInput = document.getElementById("editDescuentoGeneral");
-        if (descuentoInput) {
-            descuentoInput.oninput = (e) => {
-                let val = parseFloat(e.target.value) || 0;
-                descuentoGeneral = Math.min(100, Math.max(0, val));
-                const tSin = productosPedido.reduce((s, p) => s + p.precio * p.cantidad * (1 - (p.descuento || 0) / 100), 0);
-                const tCon = tSin * (1 - descuentoGeneral / 100);
-                const tSpan = document.getElementById("pedidoTotal");
-                if (tSpan) tSpan.textContent = `$${tCon.toFixed(2)}`;
+        document.getElementById('eoCloseBtn').onclick = cerrarEdicion;
+
+        const iCliente = document.getElementById('editPedidoCliente');
+        const iDni = document.getElementById('editPedidoDni');
+        const iLoc = document.getElementById('editPedidoLocalidad');
+        iCliente.oninput = () => { form.cliente = iCliente.value; dirty = true; };
+        iDni.oninput = () => { form.dni = iDni.value; dirty = true; };
+        iLoc.onchange = () => { form.localidad = iLoc.value; dirty = true; };
+
+        document.getElementById('openProductSelector').onclick = () => openSubModal();
+
+        document.querySelectorAll('.eo-step').forEach(btn => {
+            btn.onclick = () => {
+                const idx = parseInt(btn.dataset.idx, 10);
+                const cur = Number(productosPedido[idx].cantidad) || 1;
+                setQty(idx, btn.dataset.act === 'plus' ? cur + 1 : cur - 1);
             };
-        }
-
-        const openSelectorBtn = document.getElementById("openProductSelector");
-        if (openSelectorBtn) openSelectorBtn.onclick = () => openSubModal();
-
-        document.querySelectorAll('.qtyPlus').forEach(btn => {
-            btn.onclick = () => {
-    const container = document.querySelector(".edit-modal-container");
-    const scrollPos = container ? container.scrollTop : 0;
-
-    const idx = parseInt(btn.dataset.idx, 10);
-    const pInfo = productosDB.find(pdb => pdb.id === productosPedido[idx].id);
-    const sOrig = (pedido.productos || []).find(op => op.id === productosPedido[idx].id)?.cantidad || 0;
-    const sBase = (pInfo?.stock ?? 0) + sOrig;
-
-    if (productosPedido[idx].cantidad < sBase) {
-        productosPedido[idx].cantidad++;
-        renderModal("", scrollPos);
-    } else {
-        renderModal(`Stock máximo alcanzado`, scrollPos);
-    }
-};
         });
 
-        document.querySelectorAll('.qtyMinus').forEach(btn => {
-            btn.onclick = () => {
-    const container = document.querySelector(".edit-modal-container");
-    const scrollPos = container ? container.scrollTop : 0;
-
-    const idx = parseInt(btn.dataset.idx, 10);
-
-    if (productosPedido[idx].cantidad > 1) {
-        productosPedido[idx].cantidad--;
-        renderModal("", scrollPos);
-    }
-};
+        document.querySelectorAll('.eo-qty').forEach(input => {
+            input.onfocus = () => input.select();
+            input.onchange = () => setQty(parseInt(input.dataset.idx, 10), input.value);
         });
 
-        document.querySelectorAll('.editQtyInput').forEach(input => {
-            input.onchange = () => {
-    const container = document.querySelector(".edit-modal-container");
-    const scrollPos = container ? container.scrollTop : 0;
-
-    const idx = parseInt(input.dataset.idx, 10);
-    let val = Math.max(1, parseInt(input.value, 10) || 1);
-
-    productosPedido[idx].cantidad = val;
-
-    renderModal("", scrollPos);
-};
-        });
-
-        document.querySelectorAll('.editDescuentoInput').forEach(input => {
-            input.onchange = () => {
+        document.querySelectorAll('.eo-disc').forEach(input => {
+            input.onfocus = () => input.select();
+            input.oninput = () => {
                 const idx = parseInt(input.dataset.idx, 10);
-                let val = parseFloat(input.value) || 0;
-                productosPedido[idx].descuento = Math.min(100, Math.max(0, val));
+                const v = Math.min(100, Math.max(0, parseFloat(input.value) || 0));
+                productosPedido[idx].descuento = v;
+                dirty = true;
+                refreshItem(idx);
+                refreshTotals();
+            };
+            input.onchange = () => {
+                const v = productosPedido[parseInt(input.dataset.idx, 10)].descuento;
+                input.value = v || '';
+            };
+        });
+
+        document.querySelectorAll('.eo-del').forEach(btn => {
+            btn.onclick = () => {
+                const idx = parseInt(btn.dataset.idx, 10);
+                const nombre = productosPedido[idx]?.nombre || 'este producto';
+                if (!confirm(`¿Quitar "${nombre}" del pedido?`)) return;
+                productosPedido.splice(idx, 1);
+                dirty = true;
                 renderModal();
             };
         });
 
-        document.querySelectorAll('.deletePrBtn').forEach(btn => {
-            btn.onclick = () => {
-    const container = document.querySelector(".edit-modal-container");
-    const scrollPos = container ? container.scrollTop : 0;
-
-    productosPedido.splice(parseInt(btn.dataset.idx, 10), 1);
-
-    renderModal("", scrollPos);
-};
+        const descInput = document.getElementById('editDescuentoGeneral');
+        document.querySelectorAll('.eo-chip').forEach(chip => {
+            chip.onclick = () => {
+                descuentoGeneral = parseFloat(chip.dataset.v) || 0;
+                descInput.value = descuentoGeneral || '';
+                dirty = true;
+                refreshChips();
+                refreshTotals();
+            };
         });
+        descInput.onfocus = () => descInput.select();
+        descInput.oninput = () => {
+            descuentoGeneral = Math.min(100, Math.max(0, parseFloat(descInput.value) || 0));
+            dirty = true;
+            refreshChips();
+            refreshTotals();
+        };
+        descInput.onchange = () => { descInput.value = descuentoGeneral || ''; };
 
         const saveBtn = document.getElementById('saveEditPedidoBtn');
-        if (saveBtn) {
-            saveBtn.onclick = () => {
-                const cliente = document.getElementById('editPedidoCliente').value.trim();
-                const dni = document.getElementById('editPedidoDni').value.trim();
-                const localidad_id = document.getElementById('editPedidoLocalidad').value;
+        saveBtn.onclick = async () => {
+            const cliente = iCliente.value.trim();
+            const dni = iDni.value.trim();
+            const localidad_id = iLoc.value;
 
-                if (!cliente) return alert("Ingrese el nombre del cliente");
-                if (!dni) return alert("Ingrese el DNI del cliente");
-                if (!localidad_id) return alert("Seleccione la localidad");
-                if (!productosPedido.length) return alert("Agregue productos");
+            if (!cliente) return alert("Ingrese el nombre del cliente");
+            if (!dni) return alert("Ingrese el DNI del cliente");
+            if (!localidad_id) return alert("Seleccione la localidad");
+            if (!productosPedido.length) return alert("Agregue productos");
 
-                pedido.descuento_general = descuentoGeneral;
-                saveEditPedido(pedido.id, productosPedido, dni);
-            };
-        }
+            pedido.descuento_general = descuentoGeneral;
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Guardando…';
+            try {
+                await saveEditPedido(pedido.id, productosPedido, dni);
+            } finally {
+                const b = document.getElementById('saveEditPedidoBtn');
+                if (b) { b.disabled = false; b.textContent = '💾 Guardar cambios'; }
+            }
+        };
     }
 
-    /* Submodal de selección de productos CON MEJORA DE Z-INDEX Y VISUAL */
+    /* Selector de productos: hoja inferior, queda abierta para agregar varios seguidos */
     async function openSubModal() {
         const subOverlay = document.createElement('div');
         subOverlay.id = "subModalOverlay";
-        subOverlay.style = `
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.4); backdrop-filter: blur(3px);
-            display: flex; align-items: center; justify-content: center;
-            z-index: 99999; animation: modalFadeIn 0.2s ease-out;
-        `;
+        subOverlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;z-index:100000;";
 
         subOverlay.innerHTML = `
-            <div style="background: white; width: 90%; max-width: 400px; border-radius: 15px; padding: 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.2);">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                    <h3 style="margin:0; font-size:1.2em; color:#2c3e50;">Añadir Producto</h3>
-                    <button id="closeSubBtn" style="background:none; border:none; font-size:24px; cursor:pointer; color:#95a5a6;">&times;</button>
+            <div style="background:#fff;width:100%;max-width:560px;height:85vh;height:85dvh;border-radius:18px 18px 0 0;display:flex;flex-direction:column;overflow:hidden;">
+                <div style="flex:none;display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #e5e9ef;">
+                    <h3 style="margin:0;font-size:1.1rem;color:#1f2d3d;flex:1;">Agregar productos</h3>
+                    <button type="button" id="closeSubBtn" class="eo-x" aria-label="Cerrar">✕</button>
                 </div>
-                <div style="display:flex; flex-direction:column; gap:12px; max-height:70vh; overflow:auto;">
-                    <div style="display:flex; flex-direction:column; gap:8px;">
-                        <select id="filtroCategoria" style="padding:10px; border-radius:8px; border:1px solid #ddd; background:#f9f9f9;">
-                            <option value="">Todas las categorías</option>
-                            ${categorias.map(c => `<option value="${c.id}">${safeText(c.nombre)}</option>`).join('')}
-                        </select>
-                        <input type="text" id="buscadorProducto" placeholder="Buscar producto..." style="padding:10px; border-radius:8px; border:1px solid #ddd;">
-                    </div>
-                    <div id="listaProductosSubModal" style="margin-top:10px;"></div>
+                <div style="flex:none;display:grid;gap:8px;padding:10px 14px;">
+                    <input type="search" id="buscadorProducto" class="eo-input" placeholder="🔍 Buscar producto..." autocomplete="off">
+                    <select id="filtroCategoria" class="eo-input">
+                        <option value="">Todas las categorías</option>
+                        ${categorias.map(c => `<option value="${c.id}">${safeText(c.nombre)}</option>`).join('')}
+                    </select>
+                </div>
+                <div id="listaProductosSubModal" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 14px;"></div>
+                <div style="flex:none;padding:10px 14px;padding-bottom:calc(10px + env(safe-area-inset-bottom));border-top:1px solid #e5e9ef;">
+                    <button type="button" id="doneSubBtn" class="eo-save" style="margin:0;">Listo</button>
                 </div>
             </div>
         `;
-
         document.body.appendChild(subOverlay);
 
-        const closeSub = () => document.body.removeChild(subOverlay);
+        const closeSub = () => { if (subOverlay.parentNode) subOverlay.parentNode.removeChild(subOverlay); };
         document.getElementById('closeSubBtn').onclick = closeSub;
+        document.getElementById('doneSubBtn').onclick = closeSub;
+        subOverlay.onclick = (e) => { if (e.target === subOverlay) closeSub(); };
 
         const lista = document.getElementById('listaProductosSubModal');
-        function renderProductos(filtro = "", cat = "") {
-            let filtrados = productosDB.filter(p =>
-                (!cat || p.categoria_id == cat) &&
-                (p.nombre.toLowerCase().includes(filtro.toLowerCase()))
-            );
+        const buscador = document.getElementById('buscadorProducto');
+        const filtroCat = document.getElementById('filtroCategoria');
 
-            // 🛡️ Los productos sin ID asignado en Supabase no se pueden agregar a un
-            // pedido: no hay forma de descontarles stock ni de referenciarlos después
-            // (un intento de hacerlo termina en "invalid input syntax for type bigint: null").
+        function renderProductos() {
+            const filtro = buscador.value.toLowerCase();
+            const cat = filtroCat.value;
+            const filtrados = productosDB.filter(p =>
+                (!cat || p.categoria_id == cat) && String(p.nombre || '').toLowerCase().includes(filtro));
+
+            // 🛡️ Los productos sin ID asignado en Supabase no se pueden agregar a un pedido:
+            // no hay forma de descontarles stock ni de referenciarlos después.
             const sinId = filtrados.filter(p => p.id === null || p.id === undefined || p.id === '');
             const conId = filtrados.filter(p => !(p.id === null || p.id === undefined || p.id === ''));
 
-            let html = conId.map(p => `
-                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding:10px 0;">
-                    <div style="display:flex; flex-direction:column;">
-                        <span style="font-weight:600; font-size:14px;">${safeText(p.nombre)}</span>
-                        <span style="font-size:11px; color:#999;">ID: ${p.id}</span>
-                        <span style="font-size:12px; color:#3498db;">$${p.precio} | Stock: ${p.stock ?? 0}</span>
+            let html = conId.map(p => {
+                const ya = productosPedido.some(pp => pp.id == p.id);
+                return `
+                <div class="eo-prod-row">
+                    <div style="min-width:0;">
+                        <b>${safeText(p.nombre)}</b>
+                        <small>$${fmtARS(p.precio)} · Stock: ${p.stock ?? 0}</small>
                     </div>
-                    <button class="addProdBtn" data-id="${p.id}" style="background:#2ecc71; color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:12px; font-weight:bold;">+ Add</button>
-                </div>
-            `).join('');
+                    <button type="button" class="eo-prod-add" data-id="${p.id}" ${ya ? 'disabled' : ''}>${ya ? '✓ Agregado' : '+ Agregar'}</button>
+                </div>`;
+            }).join('');
 
             if (sinId.length > 0) {
                 html += sinId.map(p => `
-                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px dashed #e67e22; padding:10px 0; opacity:0.75;">
-                        <div style="display:flex; flex-direction:column;">
-                            <span style="font-weight:600; font-size:14px;">${safeText(p.nombre)}</span>
-                            <span style="font-size:12px; color:#e67e22;">⚠️ Sin ID en Supabase — no se puede agregar</span>
-                        </div>
-                    </div>
-                `).join('');
+                    <div class="eo-prod-row" style="opacity:.75;">
+                        <div><b>${safeText(p.nombre)}</b><small style="color:#e67e22;">⚠️ Sin ID en Supabase — no se puede agregar</small></div>
+                    </div>`).join('');
             }
-
+            if (!html) html = '<div class="eo-empty">No se encontraron productos</div>';
             lista.innerHTML = html;
 
-            document.querySelectorAll('.addProdBtn').forEach(btn => {
+            lista.querySelectorAll('.eo-prod-add').forEach(btn => {
                 btn.onclick = () => {
                     const prod = productosDB.find(p => p.id == btn.dataset.id);
-                    if (!productosPedido.some(pp => pp.id == prod.id)) {
-                        productosPedido.push({ id: prod.id, nombre: prod.nombre, cantidad: 1, precio: prod.precio, descuento: 0 });
-                        closeSub();
-                        renderModal();
-                    } else {
-                        alert("Este producto ya está en el pedido");
-                    }
+                    if (!prod || productosPedido.some(pp => pp.id == prod.id)) return;
+                    productosPedido.push({ id: prod.id, nombre: prod.nombre, cantidad: 1, precio: prod.precio, descuento: 0 });
+                    dirty = true;
+                    const top = lista.scrollTop;
+                    renderModal();       // actualiza el pedido que está detrás
+                    renderProductos();   // marca el producto como agregado
+                    lista.scrollTop = top;
                 };
             });
         }
         renderProductos();
-
-        document.getElementById('buscadorProducto').oninput = e => renderProductos(e.target.value, document.getElementById('filtroCategoria').value);
-        document.getElementById('filtroCategoria').onchange = e => renderProductos(document.getElementById('buscadorProducto').value, e.target.value);
+        buscador.oninput = renderProductos;
+        filtroCat.onchange = renderProductos;
     }
 
     window.saveEditPedido = async function(id, nuevosProductos, dni) {
@@ -6900,9 +7113,10 @@ async function exportPedidoPDF(pedido) {
         });
 
         const totalSinDescuento = pedido.productos.reduce((acc, p) => acc + (p.precio || 0) * (p.cantidad || 0), 0);
-        const descuentoGeneral = pedido.descuento_general || 0;
-        const totalConDescuentoGeneral = totalSinDescuento * (1 - descuentoGeneral / 100);
-        const totalFinal = totalConDescuentoGeneral - descuentoTotal;
+        const descuentoGeneral = parseFloat(pedido.descuento_general) || 0;
+        // Mismo cálculo que el modal de edición: primero descuentos por producto, luego el general sobre ese neto
+        const subtotalNeto = totalSinDescuento - descuentoTotal;
+        const totalFinal = subtotalNeto * (1 - descuentoGeneral / 100);
 
         const totalPagos = (pedido.pagos || []).reduce((sum, p) => sum + (p.monto || 0), 0);
         const saldoPendiente = Math.max(0, totalFinal - totalPagos);
@@ -7005,11 +7219,16 @@ finalY += 8;
 
 if (descuento > 0) {
     doc.text(
-        `Descuento general (${descuento.toFixed(2)}%): -$${(Number(totalSinDescuento || 0) * descuento / 100).toFixed(2)}`,
+        `Descuento general (${descuento.toFixed(2)}%): -$${(Number(subtotalNeto || 0) * descuento / 100).toFixed(2)}`,
         totalX,
         finalY,
         { align: "right" }
     );
+    finalY += 8;
+}
+
+if (descuento > 0 || descuentoTotal > 0) {
+    doc.text(`Total con descuento: $${Number(totalFinal || 0).toFixed(2)}`, totalX, finalY, { align: "right" });
     finalY += 8;
 }
 

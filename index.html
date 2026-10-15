@@ -939,6 +939,7 @@ button[onclick*="delete"] {
   <h2>MENU</h2>
   <ul style="list-style:none; padding:0; margin:0;">
     <li><button class="tab-btn" data-tab="promos">Promociones</button></li>
+    <li><button class="tab-btn" data-tab="combos">🎁 Combos</button></li>
     <li><button class="tab-btn" data-tab="pedidos">Pedidos</button></li>
     <li><button class="tab-btn" data-tab="pedidosArchivados">Pedidos Archivados</button></li>
     <li><button class="tab-btn" data-tab="ctaCte">Cuenta Corriente</button></li>
@@ -1120,6 +1121,25 @@ button[onclick*="delete"] {
         <label for="modalStock">Stock (unidades):</label>
         <input type="number" id="modalStock" min="0" required>
 
+        <div style="margin-top:14px;padding:10px;border:1px solid #e3e3e3;border-radius:8px;background:#fafafa;">
+            <b>📦 Venta por caja cerrada</b>
+            <p style="font-size:12px;color:#777;margin:4px 0 8px;">Comparte el mismo stock en unidades. Al llevar esa cantidad (o más) se aplica el precio de caja. Dejar vacío si no se vende por caja.</p>
+            <label for="modalUpc">Unidades por caja:</label>
+            <input type="number" id="modalUpc" min="0" placeholder="Ej: 12">
+            <label for="modalPrecioCaja">Precio de la caja cerrada ($):</label>
+            <input type="number" id="modalPrecioCaja" min="0" step="0.01" placeholder="Precio total de la caja">
+        </div>
+
+        <div style="margin-top:12px;padding:10px;border:1px solid #f0c419;border-radius:8px;background:#fffbe6;">
+            <b>🔥 Promoción temporal</b>
+            <p style="font-size:12px;color:#777;margin:4px 0 8px;">Usa el mismo stock del producto. Aparece en la categoría "Promociones" mientras esté activa y queden unidades de cupo.</p>
+            <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="modalPromoActiva"> Promoción activa</label>
+            <label for="modalPromoPrecio">Precio promocional por unidad ($):</label>
+            <input type="number" id="modalPromoPrecio" min="0" step="0.01">
+            <label for="modalPromoCupo">Cupo de unidades en promoción (disponibles):</label>
+            <input type="number" id="modalPromoCupo" min="0" placeholder="Ej: 40">
+        </div>
+
 
    
         <div style="margin-top: 20px; text-align: right;">
@@ -1141,6 +1161,13 @@ button[onclick*="delete"] {
 
   <div id="categoriaList"></div>
 </section>         
+
+<section id="combos" class="section">
+  <h2 style="margin-bottom:8px;">🎁 Combos / Promos por volumen</h2>
+  <p style="color:#555;max-width:760px;margin:0 0 14px;">Un combo es una <b>regla</b>, no un producto nuevo: "llevando ciertos productos o categorías, uno o varios productos van sin cargo, con descuento o a un precio especial". Podés combinar varios requisitos (ej: shampoo + acondicionador) y ofrecer varios productos para elegir (ej: oxidante 10, 20, 30 o 40 vol). Los productos siguen con su único stock; acá definís cuántas unidades en promo hay disponibles y ves cuántas quedan.</p>
+  <button onclick="abrirModalCombo()" style="padding:10px 18px;background:#2ecc71;color:#fff;border:none;border-radius:8px;font-weight:bold;cursor:pointer;margin-bottom:15px;">➕ Nuevo combo</button>
+  <div id="combosList"></div>
+</section>
 
 <section id="tiposProducto" class="section">
   <h2 style="margin-bottom:15px;">Tipos de Producto</h2>
@@ -2770,6 +2797,11 @@ async function savePromotionChanges() {
                 // Si el precio anterior es 0 o NaN (vacío), guardamos null
                 precio_anterior: isNaN(newPrecioAnterior) || newPrecioAnterior === 0 ? null : newPrecioAnterior, 
                 stock: newStock,
+                unidades_por_caja: parseInt(document.getElementById('modalUpc').value, 10) || null,
+                precio_caja: parseFloat(document.getElementById('modalPrecioCaja').value) || null,
+                promo_activa: document.getElementById('modalPromoActiva').checked,
+                promo_precio: parseFloat(document.getElementById('modalPromoPrecio').value) || null,
+                promo_cupo: parseInt(document.getElementById('modalPromoCupo').value, 10) || 0,
                 imagen: newImageName,
                 categoria_id: newCategoriaId, // ¡Campo corregido!
                 tipo_id: newTipoId
@@ -2786,8 +2818,10 @@ async function savePromotionChanges() {
 
         // 5. Recargar la lista para reflejar cambios
         // Se asume la existencia de renderPromosByFilter
-        const currentCategoryId = document.getElementById('promoCategoriaFilter').value; 
-        await renderPromosByFilter([currentCategoryId]);
+        const filtroActual = (Array.isArray(lastCategoryFilterIds) && lastCategoryFilterIds.length)
+            ? lastCategoryFilterIds
+            : [document.getElementById('promoCategoriaFilter').value || ''];
+        await renderPromosByFilter(filtroActual);
 
     } catch (err) {
         console.error('Error al guardar cambios:', err);
@@ -2931,6 +2965,9 @@ function activateSection(tab) {
             break;
 case 'ctaCte':
     break;
+        case 'combos':
+            if (typeof initCombosSection === 'function') initCombosSection();
+            break;
         case 'novedades':
             if (typeof initNovedadesSection === 'function') initNovedadesSection();
             break;
@@ -3021,7 +3058,7 @@ function handleCategoryFilter() {
     if (filterSelect) filterSelect.removeEventListener('change', handlePromoFilterChange);
     
     // Llamar a la función de renderizado (que ahora debe estar optimizada para el ID)
-    renderPromosByFilter(categoryId); 
+    renderPromosByFilter([categoryId]); 
 }
 
 
@@ -3144,6 +3181,11 @@ async function openEditModal(promoId) {
         document.getElementById('modalPrecio').value = promo.precio || 0;
         document.getElementById('modalPrecioAnterior').value = promo.precio_anterior || '';
         document.getElementById('modalStock').value = promo.stock || 0;
+        document.getElementById('modalUpc').value = promo.unidades_por_caja || '';
+        document.getElementById('modalPrecioCaja').value = promo.precio_caja || '';
+        document.getElementById('modalPromoActiva').checked = !!promo.promo_activa;
+        document.getElementById('modalPromoPrecio').value = promo.promo_precio || '';
+        document.getElementById('modalPromoCupo').value = promo.promo_cupo || '';
 
         // 3. 🎯 CORRECCIÓN: Llenar el <select> y seleccionar la opción actual
         // Reemplazamos 'loadCategoriesIntoModal' por su función 'populateCategoriaSelect'.
@@ -3515,7 +3557,14 @@ async function renderPromosByFilter(categoryIds = []) {
     let categoryName = 'Promociones Filtradas';
 
     // 3. Clasificación de los IDs recibidos
-    const specificCategoryIds = categoryIds.filter(id => id !== 'sin_categoria' && id !== '');
+    const specificCategoryIds = categoryIds.filter(id => id !== 'sin_categoria' && id !== '' && id !== '__promos__');
+    // La categoría real "Promociones" también muestra los productos con promo activa y los combos
+    let promoCatIds = [];
+    try {
+        const { data: catsAll } = await supabase.from('categorias').select('id,nombre');
+        promoCatIds = (catsAll || []).filter(esCategoriaPromos).map(c => String(c.id));
+    } catch (e) { console.warn('No se pudieron leer las categorías:', e); }
+    const isPromosSelected = categoryIds.includes('__promos__') || specificCategoryIds.some(id => promoCatIds.includes(String(id)));
     const isSinCategoriaSelected = categoryIds.includes('sin_categoria');
     const isTodasSelected = categoryIds.includes('');
     let filterApplied = false;
@@ -3527,6 +3576,8 @@ async function renderPromosByFilter(categoryIds = []) {
             categoryName = 'Todas las Promociones';
         } else if (id === 'sin_categoria') {
             categoryName = 'Sin Categoría';
+        } else if (id === '__promos__') {
+            categoryName = '🔥 Promociones vigentes';
         } else {
             const { data: categoriaData } = await supabase.from("categorias").select("nombre").eq("id", id).maybeSingle();
             categoryName = categoriaData?.nombre || 'Promociones Filtradas';
@@ -3536,7 +3587,21 @@ async function renderPromosByFilter(categoryIds = []) {
     }
 
     // 5. APLICACIÓN DE FILTROS (CORRECCIÓN DE ERROR 400 - PostgREST eq.null)
-    if (isTodasSelected) {
+    if (isPromosSelected && !isTodasSelected) {
+        // La categoría "Promociones" muestra los productos con promoción activa (sin cambiar su categoría real)
+        const otrasCats = specificCategoryIds.filter(id => !promoCatIds.includes(String(id)));
+        const partes = ['promo_activa.eq.true'];
+        if (specificCategoryIds.length > 0) partes.push(`categoria_id.in.(${specificCategoryIds.join(',')})`);
+        if (isSinCategoriaSelected) partes.push('categoria_id.is.null');
+        query = query.or(partes.join(','));
+        if (otrasCats.length > 0 || isSinCategoriaSelected) {
+            categoryName = 'Promociones y otras categorías';
+        } else if (categoryName === 'Promociones Filtradas') {
+            categoryName = '🔥 Promociones';
+        }
+        filterApplied = true;
+    }
+    else if (isTodasSelected) {
         // No aplicamos filtro de categoría para mostrar todo el catálogo
         categoryName = 'Todas las Promociones';
         filterApplied = true;
@@ -3580,7 +3645,10 @@ async function renderPromosByFilter(categoryIds = []) {
     
     container.innerHTML = ''; 
 
-    if (promos.length === 0) {
+    const combosFlyers = (isPromosSelected && !currentTipoFilter) ? await obtenerCombosFlyers() : [];
+    const flyersHTML = comboFlyersHTML(combosFlyers);
+
+    if (promos.length === 0 && !flyersHTML) {
         container.innerHTML = `<p style="padding: 20px;">No hay promociones en la categoría: <b>${categoryName}</b></p>`;
         return;
     }
@@ -3595,6 +3663,12 @@ async function renderPromosByFilter(categoryIds = []) {
     catTitle.style.borderBottom = "1px solid #333";
     catTitle.style.fontSize = "18px";
     container.appendChild(catTitle);
+
+    if (flyersHTML) {
+        const flyersWrap = document.createElement('div');
+        flyersWrap.innerHTML = flyersHTML;
+        container.appendChild(flyersWrap);
+    }
 
     // 7b. Total de existencias (stock) sumando todos los productos que componen
     // la selección actual (respeta el filtro de categoría/tipo aplicado arriba).
@@ -3704,6 +3778,21 @@ async function renderPromosByFilter(categoryIds = []) {
             <div style="text-align:center; margin-top:4px; font-size:0.9em; color:${p.stock <= 5 ? 'red' : '#333'};">
                 Stock: <b>${p.stock !== null && p.stock !== undefined ? p.stock : 'N/A'}</b>
             </div>
+
+            ${(() => {
+                let extra = '';
+                if (p.promo_activa && Number(p.promo_precio) > 0) {
+                    const cupo = parseInt(p.promo_cupo, 10) || 0;
+                    extra += cupo > 0
+                        ? `<div style="text-align:center;margin-top:4px;font-size:0.8em;color:#d35400;font-weight:bold;">🔥 Promo $${Number(p.promo_precio).toFixed(2)} · quedan ${cupo}</div>`
+                        : `<div style="text-align:center;margin-top:4px;font-size:0.8em;color:#c0392b;font-weight:bold;">🔥 Promo AGOTADA</div>`;
+                }
+                const upc = parseInt(p.unidades_por_caja, 10) || 0;
+                if (upc > 1 && Number(p.precio_caja) > 0) {
+                    extra += `<div style="text-align:center;margin-top:2px;font-size:0.8em;color:#27ae60;">📦 Caja x${upc}: $${Number(p.precio_caja).toFixed(2)}</div>`;
+                }
+                return extra;
+            })()}
 
             ${(() => {
                 const tipoProducto = availableTipos.find(t => String(t.id) === String(p.tipo_id));
@@ -4097,6 +4186,732 @@ document.getElementById('exportPromoPDF').addEventListener('click', exportSelect
    PEDIDOS: Lógica de Persistencia y Control de Stock (CORREGIDO)
    ========================================================= */
 
+// ==================== PRECIOS: PROMO TEMPORAL + CAJA CERRADA ====================
+// Un solo stock (en unidades) por producto. La promo y la caja solo cambian el PRECIO por unidad.
+window.productosPorId = window.productosPorId || {};
+
+function promoVigente(p) {
+    return !!(p && p.promo_activa && Number(p.promo_precio) > 0 && (parseInt(p.promo_cupo, 10) || 0) > 0);
+}
+
+// cupoExtra: unidades de promo que el pedido (al editarlo) ya tenía reservadas.
+// sinPromo: true para no aplicar la promo (ej. líneas viejas de un pedido que no la tenían).
+function precioVigente(p, cant, cupoExtra, sinPromo) {
+    const base = Number(p && p.precio) || 0;
+    cant = parseInt(cant, 10) || 0;
+    if (!p) return { precio: base, promo: false, caja: false };
+    const cupo = (parseInt(p.promo_cupo, 10) || 0) + (cupoExtra || 0);
+    if (!sinPromo && p.promo_activa && Number(p.promo_precio) > 0 && cant > 0 && cant <= cupo) {
+        return { precio: Number(p.promo_precio), promo: true, caja: false };
+    }
+    const upc = parseInt(p.unidades_por_caja, 10) || 0;
+    const pc = Number(p.precio_caja) || 0;
+    if (upc > 1 && pc > 0 && cant >= upc) {
+        const pu = Math.round((pc / upc) * 10000) / 10000;
+        if (pu < base) return { precio: pu, promo: false, caja: true };
+    }
+    return { precio: base, promo: false, caja: false };
+}
+
+function precioCellHTML(p, pv) {
+    let h = `$${Number(pv.precio).toFixed(2)}`;
+    if (pv.promo) h += `<div style="font-size:11px;color:#d35400;font-weight:bold;">🔥 Promo · quedan ${parseInt(p.promo_cupo, 10) || 0}</div>`;
+    else if (pv.caja) h += `<div style="font-size:11px;color:#27ae60;font-weight:bold;">📦 Precio por caja</div>`;
+    else {
+        if (promoVigente(p)) h += `<div style="font-size:11px;color:#d35400;">🔥 Promo $${Number(p.promo_precio).toFixed(2)} (quedan ${parseInt(p.promo_cupo, 10) || 0})</div>`;
+        const upc = parseInt(p.unidades_por_caja, 10) || 0;
+        if (upc > 1 && Number(p.precio_caja) > 0) h += `<div style="font-size:11px;color:#777;">📦 x${upc}: $${(Number(p.precio_caja) / upc).toFixed(2)} c/u</div>`;
+    }
+    return h;
+}
+
+// ==================== COMBOS / PROMOS POR VOLUMEN ====================
+// El combo NO es un producto: es una regla. Los productos siguen con su único stock.
+//   REQUISITOS : lista de condiciones que se deben cumplir TODAS a la vez. Cada una es
+//                "N unidades de una categoría" o "N unidades de un producto puntual".
+//                Ej: 12 de Tinturas   |   1 Shampoo + 1 Acondicionador
+//   REGALOS    : uno o más productos. Si hay varios, el cliente ELIGE entre ellos
+//                (ej: oxidante 10, 20, 30 o 40 vol). El cupo es compartido.
+//   BENEFICIO  : sin cargo (100%), % de descuento o precio especial por unidad.
+// La línea del producto en promo queda con un precio promedio (unidades con beneficio + unidades que se pagan)
+// y marca combo_id / combo_unid.
+// Compatibilidad: los combos viejos (categoria_id + unidades_requeridas + regalo_producto_id) siguen funcionando.
+window.combosActivos = window.combosActivos || [];
+
+async function cargarCombos() {
+  try {
+    const { data, error } = await supabase.from('combos').select('*').eq('activo', true).order('id');
+    if (error) throw error;
+    window.combosActivos = data || [];
+  } catch (e) {
+    console.warn('No se pudieron cargar los combos (¿falta ejecutar la migración de combos?):', e);
+    window.combosActivos = [];
+  }
+}
+
+function mapaCombos(lineas) {
+  const m = {};
+  (lineas || []).forEach(l => {
+    if (l && l.combo_id && Number(l.combo_unid) > 0) m[l.combo_id] = (m[l.combo_id] || 0) + (Number(l.combo_unid) || 0);
+  });
+  return m;
+}
+
+function combosRestante(c, origCombos) {
+  const total = parseInt(c.cupo_total, 10) || 0;
+  const usado = parseInt(c.cupo_usado, 10) || 0;
+  return Math.max(0, total - usado + ((origCombos || {})[c.id] || 0));
+}
+
+function escCombo(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+function comboMoney(n) {
+  return (Number(n) || 0).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+}
+
+function comboJson(v) {
+  if (typeof v === 'string') { try { return JSON.parse(v); } catch (e) { return null; } }
+  return v;
+}
+
+// Requisitos del combo (con fallback a las columnas viejas)
+function comboRequisitos(c) {
+  const r = comboJson(c.requisitos);
+  if (Array.isArray(r) && r.length) return r;
+  return [{ tipo: 'categoria', id: c.categoria_id, nombre: c.categoria_nombre || 'la categoría', cantidad: parseInt(c.unidades_requeridas, 10) || 0 }];
+}
+
+// Productos entre los que se puede elegir el beneficio (con fallback a las columnas viejas)
+function comboRegalos(c) {
+  const r = comboJson(c.regalos);
+  if (Array.isArray(r) && r.length) return r;
+  return c.regalo_producto_id ? [{ id: c.regalo_producto_id, nombre: c.regalo_nombre || '' }] : [];
+}
+
+function comboEsPrecioEspecial(c) {
+  return c.beneficio_tipo === 'precio' && c.precio_especial !== null && c.precio_especial !== undefined && c.precio_especial !== '';
+}
+
+function comboBeneficioTxt(c) {
+  if (comboEsPrecioEspecial(c)) return `a precio especial ($${comboMoney(c.precio_especial)} c/u)`;
+  const d = (c.descuento_pct === null || c.descuento_pct === undefined) ? 100 : Number(c.descuento_pct);
+  return d >= 100 ? 'sin cargo' : `con ${d}% de descuento`;
+}
+
+// ================= FLYERS DE COMBOS (categoría "Promociones") =================
+function esCategoriaPromos(cat) {
+  const n = String((cat && cat.nombre) || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return n.includes('promocion');
+}
+
+function comboVigenteFlyer(c) {
+  if (!c || !c.activo) return false;
+  return ((parseInt(c.cupo_total, 10) || 0) - (parseInt(c.cupo_usado, 10) || 0)) > 0;
+}
+
+// Texto que explica cómo funciona el combo
+function comboExplicacionHTML(c) {
+  const reqs = comboRequisitos(c).map(r =>
+    `<b>${r.cantidad}</b> ${r.tipo === 'producto' ? 'unidad(es) de' : 'producto(s) de la categoría'} <b>${escCombo(r.nombre || '?')}</b>`).join(' <b>+</b> ');
+  const regalos = comboRegalos(c);
+  const cant = parseInt(c.regalo_cantidad, 10) || 1;
+  const que = regalos.length > 1
+    ? `<b>${cant}</b> unidad(es) a elección entre: <b>${regalos.map(r => escCombo(r.nombre)).join(' / ')}</b>`
+    : `<b>${cant} × ${escCombo((regalos[0] || {}).nombre || '')}</b>`;
+  const rep = c.repetir
+    ? 'La promo se repite: por cada grupo completo que lleves, se aplica otra vez.'
+    : 'La promo se aplica una sola vez por pedido.';
+  return `<p style="margin:0 0 10px;font-size:16px;line-height:1.5;">Llevando ${reqs}, te llevás ${que} <b>${comboBeneficioTxt(c)}</b>.</p>
+          <p style="margin:0;color:#666;font-size:13px;">${rep} Mientras haya unidades en promo disponibles.</p>`;
+}
+
+function abrirComboDetalle(id) {
+  const c = (window._combosFlyer || {})[id];
+  if (!c) return;
+  const old = document.getElementById('comboDetalleOverlay');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'comboDetalleOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+  ov.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:460px;width:100%;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.3);">
+      <div style="background:linear-gradient(135deg,#ff7e29,#e63946);color:#fff;padding:18px 20px;">
+        <div style="font-size:12px;letter-spacing:2px;opacity:.9;">🎁 COMBO / PROMOCIÓN</div>
+        <div style="font-size:22px;font-weight:800;margin-top:4px;">${escCombo(c.nombre)}</div>
+      </div>
+      <div style="padding:18px 20px;">${comboExplicacionHTML(c)}</div>
+      <div style="padding:0 20px 18px;text-align:right;">
+        <button type="button" onclick="document.getElementById('comboDetalleOverlay').remove()" style="background:#2c3e50;color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-weight:bold;">Cerrar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+// Tarjetas tipo flyer: sin precio y sin stock
+function comboFlyersHTML(combos) {
+  const lista = (combos || []).filter(comboVigenteFlyer);
+  if (!lista.length) return '';
+  window._combosFlyer = window._combosFlyer || {};
+  lista.forEach(c => { window._combosFlyer[c.id] = c; });
+  const cards = lista.map(c => `
+    <div onclick="abrirComboDetalle(${c.id})" style="cursor:pointer;border-radius:12px;padding:18px 14px;text-align:center;color:#fff;background:linear-gradient(135deg,#ff7e29,#e63946);box-shadow:0 3px 10px rgba(0,0,0,.18);">
+      <div style="font-size:34px;line-height:1;">🎁</div>
+      <div style="font-size:11px;letter-spacing:2px;margin-top:6px;opacity:.9;">COMBO</div>
+      <div style="font-size:17px;font-weight:800;margin:6px 0;">${escCombo(c.nombre)}</div>
+      <div style="font-size:12px;opacity:.95;">Tocá para ver cómo funciona</div>
+    </div>`).join('');
+  return `<div class="combo-flyers" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:10px 0 16px;">${cards}</div>`;
+}
+
+async function obtenerCombosFlyers() {
+  try {
+    const { data, error } = await supabase.from('combos').select('*').eq('activo', true).order('id');
+    if (error) throw error;
+    return data || [];
+  } catch (e) { console.warn('No se pudieron cargar los combos:', e); return []; }
+}
+
+// Precio que paga el cliente por cada unidad con beneficio
+function comboPrecioUnitBenef(c, base) {
+  if (comboEsPrecioEspecial(c)) return Math.min(base, Math.max(0, Number(c.precio_especial) || 0));
+  const d = (c.descuento_pct === null || c.descuento_pct === undefined) ? 100 : Math.min(100, Math.max(0, Number(c.descuento_pct)));
+  return base * (1 - d / 100);
+}
+
+// Aplica los combos a las líneas (idempotente). origCombos: unidades de combo que el pedido ya tenía reservadas (edición).
+// Devuelve { cambio, estado } donde estado describe cada combo para mostrar avisos.
+function aplicarCombos(lineas, origCombos) {
+  const combos = window.combosActivos || [];
+  const sig = () => lineas.map(l => `${l.id}:${l.precio}:${l.combo_id || ''}:${l.combo_unid || 0}`).join('|');
+  const antes = sig();
+
+  // 1) Quitar el efecto previo (solo de combos que siguen activos; los pausados quedan "congelados")
+  lineas.forEach(l => {
+    if (!l.combo_id) return;
+    if (!combos.some(c => String(c.id) === String(l.combo_id))) return;
+    if (l._pc !== undefined && l._pc !== null && l.precio_base !== undefined && l.precio_base !== null && Number(l.precio) === Number(l._pc)) {
+      l.precio = Number(l.precio_base);
+      l.precio_anterior = (l._pa_prev === undefined ? null : l._pa_prev);
+    }
+    delete l.combo_id; delete l.combo_unid; delete l.precio_base; delete l._pc; delete l._pa_prev;
+  });
+
+  // 2) Aplicar cada combo
+  const estado = [];
+  combos.forEach(c => {
+    const reqs = comboRequisitos(c).filter(r => r && r.id !== null && r.id !== undefined && r.id !== '' && (parseInt(r.cantidad, 10) || 0) > 0);
+    const regalos = comboRegalos(c);
+    if (!reqs.length || !regalos.length) return;
+    const giftIds = new Set(regalos.map(r => String(r.id)));
+
+    // Cuántas unidades lleva el cliente de cada requisito (los productos en promo no cuentan para el requisito)
+    const progreso = reqs.map(r => ({ nombre: r.nombre || '', tipo: r.tipo, req: parseInt(r.cantidad, 10), tiene: 0 }));
+    lineas.forEach(l => {
+      if (giftIds.has(String(l.id))) return;
+      const info = window.productosPorId[l.id];
+      const cant = Number(l.cantidad) || 0;
+      reqs.forEach((r, i) => {
+        const coincide = r.tipo === 'producto'
+          ? String(l.id) === String(r.id)
+          : !!(info && String(info.categoria_id) === String(r.id));
+        if (coincide) progreso[i].tiene += cant;
+      });
+    });
+
+    // Se necesita cumplir TODOS los requisitos; con "repetir", cada grupo completo da un beneficio
+    const grupos = Math.min(...progreso.map(p => Math.floor(p.tiene / p.req)));
+    const veces = c.repetir ? grupos : (grupos >= 1 ? 1 : 0);
+    const ganados = veces * (parseInt(c.regalo_cantidad, 10) || 1);
+    const restante = combosRestante(c, origCombos);
+
+    // Repartir las unidades ganadas entre los productos elegidos por el cliente (en orden del carrito)
+    let pendiente = Math.min(ganados, restante);
+    let aplicados = 0;
+    const detalle = [];
+    lineas.forEach(l => {
+      if (pendiente <= 0) return;
+      if (!giftIds.has(String(l.id)) || l.combo_id || l.precioManual) return;
+      const cant = Number(l.cantidad) || 0;
+      const ap = Math.min(pendiente, cant);
+      if (ap <= 0) return;
+      const base = Number(l.precio) || 0;
+      const unit = comboPrecioUnitBenef(c, base);
+      const nuevo = Math.round(((base * (cant - ap)) + (unit * ap)) / cant * 10000) / 10000;
+      l._pa_prev = (l.precio_anterior === undefined ? null : l.precio_anterior);
+      l.precio_base = base;
+      l._pc = nuevo;
+      l.precio = nuevo;
+      l.precio_anterior = base;
+      l.combo_id = c.id;
+      l.combo_unid = ap;
+      pendiente -= ap;
+      aplicados += ap;
+      detalle.push({ nombre: l.nombre, unidades: ap });
+    });
+
+    estado.push({ combo: c, progreso, regalos, detalle, ganados, aplicados, restante,
+                  falta: Math.max(0, Math.min(ganados, restante) - aplicados) });
+  });
+  return { cambio: antes !== sig(), estado };
+}
+
+// Descuenta (delta>0) o devuelve (delta<0) cupo de combos. Devuelve avisos de cupo bajo/agotado.
+async function ajustarCuposCombos(orig, nuevo) {
+  const msgs = [];
+  const ids = new Set([...Object.keys(orig || {}), ...Object.keys(nuevo || {})]);
+  for (const id of ids) {
+    const delta = ((nuevo || {})[id] || 0) - ((orig || {})[id] || 0);
+    if (!delta) continue;
+    const { data: c } = await supabase.from('combos').select('*').eq('id', id).maybeSingle();
+    if (!c) continue;
+    const usado = Math.max(0, (parseInt(c.cupo_usado, 10) || 0) + delta);
+    await supabase.from('combos').update({ cupo_usado: usado }).eq('id', id);
+    const rest = (parseInt(c.cupo_total, 10) || 0) - usado;
+    const nom = comboRegalos(c).map(r => r.nombre).join(' / ') || 'producto en promo';
+    if (delta > 0 && rest <= 0) msgs.push(`⚠️ Se AGOTÓ el cupo del combo "${c.nombre}" (${nom}). Ya no ofrecerlo.`);
+    else if (delta > 0 && rest <= 5) msgs.push(`ℹ️ Combo "${c.nombre}": quedan ${rest} en promo.`);
+  }
+  return msgs;
+}
+
+// fnAgregar se invoca como fnAgregar(comboId, cantidad, productoId)
+function bannerCombosHTML(estado, fnAgregar) {
+  const items = [];
+  (estado || []).forEach(e => {
+    const c = e.combo;
+    const benef = comboBeneficioTxt(c);
+    const cn = escCombo(c.nombre);
+    const multi = e.regalos.length > 1;
+    const nomRegalo = multi
+      ? 'un producto a elegir (' + e.regalos.map(r => escCombo(r.nombre)).join(' / ') + ')'
+      : `<b>${escCombo(e.regalos[0].nombre)}</b>`;
+    const quedan = Math.max(0, e.restante - e.aplicados);
+
+    if (e.aplicados > 0) {
+      const det = e.detalle.map(d => `<b>${escCombo(d.nombre)}</b> ×${d.unidades}`).join(', ');
+      items.push(`<div style="color:#166534;">🎁 ${det} ${benef} (combo "${cn}") · quedan ${quedan} en promo</div>`);
+    }
+    if (e.falta > 0) {
+      const btns = e.regalos.map(r =>
+        `<button type="button" onclick="${fnAgregar}(${c.id}, ${e.falta}, '${escCombo(r.id)}')" style="margin:2px 4px 2px 0;padding:3px 10px;border:none;border-radius:6px;background:#f39c12;color:#fff;font-weight:bold;cursor:pointer;">${multi ? '+ ' + escCombo(r.nombre) : 'Agregar'}</button>`).join('');
+      items.push(`<div style="color:#92400e;">🎁 Ganó ${e.falta} × ${nomRegalo} ${benef} (combo "${cn}") ${multi ? '<br>' : ''}${btns}</div>`);
+    } else if (e.ganados > 0 && e.restante <= 0 && e.aplicados === 0) {
+      items.push(`<div style="color:#c0392b;">❌ Combo "${cn}" AGOTADO: ya no quedan unidades en promo</div>`);
+    } else if (e.ganados === 0 && e.restante > 0 && e.progreso.some(p => p.tiene > 0)) {
+      const faltan = e.progreso.filter(p => p.tiene < p.req).map(p => `${p.req - p.tiene} × ${escCombo(p.nombre)}`).join(' y ');
+      items.push(`<div style="color:#475569;">🎁 Combo "${cn}": con ${faltan} más, ${nomRegalo} ${benef} (quedan ${e.restante} en promo)</div>`);
+    }
+  });
+  if (!items.length) return '';
+  return `<div style="margin:8px 0;padding:8px 10px;background:#fffbe6;border:1px solid #f0c419;border-radius:8px;font-size:13px;line-height:1.5;">${items.join('')}</div>`;
+}
+
+// ==================== SECCIÓN "🎁 COMBOS" ====================
+async function initCombosSection() {
+    await renderCombosList();
+}
+
+async function renderCombosList() {
+    const cont = document.getElementById('combosList');
+    if (!cont) return;
+    cont.innerHTML = '<p>Cargando combos...</p>';
+    const { data, error } = await supabase.from('combos').select('*').order('id', { ascending: false });
+    if (error) {
+        cont.innerHTML = `<p style="color:#c0392b;">No se pudieron cargar los combos: ${escCombo(error.message)}. ¿Ejecutaste la migración SQL de combos?</p>`;
+        return;
+    }
+    if (!data || data.length === 0) {
+        cont.innerHTML = '<p style="color:#777;">Todavía no hay combos. Creá el primero con "➕ Nuevo combo".</p>';
+        return;
+    }
+    const ids = [...new Set(data.flatMap(c => comboRegalos(c).map(r => r.id)))];
+    const prodPorId = {};
+    if (ids.length) {
+        const { data: prods } = await supabase.from('promociones').select('id, nombre, stock').in('id', ids);
+        (prods || []).forEach(p => { prodPorId[p.id] = p; });
+    }
+
+    cont.innerHTML = data.map(c => {
+        const total = parseInt(c.cupo_total, 10) || 0;
+        const usado = parseInt(c.cupo_usado, 10) || 0;
+        const rest = Math.max(0, total - usado);
+        const pct = total > 0 ? Math.min(100, Math.round(usado / total * 100)) : 100;
+        const agotado = rest <= 0;
+        let estado, color;
+        if (!c.activo) { estado = '⏸️ Pausado'; color = '#7f8c8d'; }
+        else if (agotado) { estado = '❌ AGOTADO'; color = '#c0392b'; }
+        else if (rest <= 5) { estado = '⚠️ Quedan pocos'; color = '#e67e22'; }
+        else { estado = '✅ Activo'; color = '#27ae60'; }
+
+        const benef = comboBeneficioTxt(c);
+        const reqsTxt = comboRequisitos(c).map(r =>
+            `<b>${r.cantidad}</b> de ${r.tipo === 'producto' ? '🧴' : '🏷️ categoría'} <b>${escCombo(r.nombre || '?')}</b>`).join(' <span style="color:#888;">+</span> ');
+        const regalos = comboRegalos(c);
+        const multi = regalos.length > 1;
+        const chips = regalos.map(r => {
+            const p = prodPorId[r.id];
+            const st = p ? (p.stock ?? 0) : null;
+            const bad = !p || st <= 0;
+            return `<span style="display:inline-block;margin:2px 4px 2px 0;padding:3px 9px;border-radius:14px;font-size:12px;background:${bad ? '#fdecea' : '#ecfdf5'};border:1px solid ${bad ? '#f5b7b1' : '#86efac'};">${escCombo(r.nombre)} <span style="color:#777;">${p ? '(stock ' + st + ')' : '(no encontrado)'}</span></span>`;
+        }).join('');
+        const stockTotal = regalos.reduce((a, r) => a + (prodPorId[r.id] ? (prodPorId[r.id].stock ?? 0) : 0), 0);
+        const faltantes = regalos.filter(r => !prodPorId[r.id]);
+        const avisoStock = (c.activo && stockTotal < rest)
+            ? `<div style="margin-top:6px;color:#c0392b;font-size:13px;">⚠️ El stock actual ${multi ? 'sumado de los productos en promo' : 'del producto en promo'} (${stockTotal}) es menor que el cupo disponible.</div>` : '';
+        const avisoProd = faltantes.length
+            ? `<div style="margin-top:6px;color:#c0392b;font-size:13px;">⚠️ No se encontró ${faltantes.length > 1 ? 'algún producto' : 'el producto'} en promo (¿fue eliminado?).</div>` : '';
+        return `
+        <div style="background:#fff;border:1px solid #ddd;border-left:6px solid ${color};border-radius:10px;padding:14px 16px;margin-bottom:12px;max-width:760px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
+                <b style="font-size:16px;">${escCombo(c.nombre)}</b>
+                <span style="font-weight:bold;color:${color};">${estado}</span>
+            </div>
+            <div style="margin-top:6px;color:#333;">
+                Llevando ${reqsTxt}
+                → <b>${c.regalo_cantidad} ×</b> ${multi ? 'a elegir entre:' : ''} ${benef}
+                ${c.repetir ? '<span style="color:#777;">(se repite por cada grupo completo)</span>' : '<span style="color:#777;">(una sola vez por pedido)</span>'}
+            </div>
+            <div style="margin-top:6px;">${chips}</div>
+            <div style="margin-top:10px;">
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#555;">
+                    <span>Entregados en promo: <b>${usado}</b> de ${total}</span>
+                    <span>Disponibles: <b style="color:${color};">${rest}</b></span>
+                </div>
+                <div style="height:8px;background:#eee;border-radius:6px;overflow:hidden;margin-top:4px;">
+                    <div style="height:100%;width:${pct}%;background:${color};"></div>
+                </div>
+            </div>
+            ${avisoStock}${avisoProd}
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button onclick="abrirModalCombo(${c.id})" style="padding:6px 12px;border:none;border-radius:6px;background:#3498db;color:#fff;cursor:pointer;">✏️ Editar</button>
+                <button onclick="toggleComboActivo(${c.id}, ${c.activo ? 'false' : 'true'})" style="padding:6px 12px;border:none;border-radius:6px;background:#f39c12;color:#fff;cursor:pointer;">${c.activo ? '⏸️ Pausar' : '▶️ Activar'}</button>
+                <button onclick="eliminarCombo(${c.id})" style="padding:6px 12px;border:none;border-radius:6px;background:#dc3545;color:#fff;cursor:pointer;">🗑️ Eliminar</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function toggleComboActivo(id, activo) {
+    const { error } = await supabase.from('combos').update({ activo }).eq('id', id);
+    if (error) return alert('Error: ' + error.message);
+    await cargarCombos();
+    renderCombosList();
+}
+
+async function eliminarCombo(id) {
+    if (!confirm('¿Eliminar este combo? Los pedidos ya cargados no se modifican.')) return;
+    const { error } = await supabase.from('combos').delete().eq('id', id);
+    if (error) return alert('Error: ' + error.message);
+    await cargarCombos();
+    renderCombosList();
+}
+
+// ---------- Modal de combo ----------
+window._cbReqs = [];        // [{tipo:'categoria'|'producto', id, nombre, cantidad}]
+window._cbRegalos = [];     // [{id, nombre}]
+window._cbCats = [];
+window._cbResultados = [];
+
+const CB_INP = 'width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box;';
+const CB_LBL = 'display:block;font-size:13px;font-weight:bold;margin:14px 0 4px;color:#2c3e50;';
+const CB_SUG = 'border:1px solid #eee;border-radius:8px;max-height:200px;overflow-y:auto;display:none;background:#fff;';
+
+async function abrirModalCombo(id) {
+    let combo = null;
+    if (id) {
+        const { data } = await supabase.from('combos').select('*').eq('id', id).single();
+        combo = data;
+    }
+    const { data: cats } = await supabase.from('categorias').select('id, nombre').order('nombre');
+    window._cbCats = cats || [];
+    window._cbReqs = combo ? comboRequisitos(combo).map(r => ({ ...r })) : [{ tipo: 'categoria', id: '', nombre: '', cantidad: 10 }];
+    window._cbRegalos = combo ? comboRegalos(combo).map(r => ({ ...r })) : [];
+    window._cbResultados = [];
+
+    let benTipo = 'gratis', benValor = '';
+    if (combo) {
+        if (comboEsPrecioEspecial(combo)) { benTipo = 'precio'; benValor = combo.precio_especial; }
+        else {
+            const d = (combo.descuento_pct === null || combo.descuento_pct === undefined) ? 100 : Number(combo.descuento_pct);
+            if (d < 100) { benTipo = 'pct'; benValor = d; }
+        }
+    }
+
+    const old = document.getElementById('comboModalOverlay');
+    if (old) old.remove();
+    const ov = document.createElement('div');
+    ov.id = 'comboModalOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:12000;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 10px;';
+    ov.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:20px;max-width:600px;width:100%;box-sizing:border-box;">
+        <h3 style="margin-top:0;">${combo ? '✏️ Editar combo' : '➕ Nuevo combo'}</h3>
+        <input type="hidden" id="cbId" value="${combo ? combo.id : ''}">
+
+        <label style="${CB_LBL}margin-top:0;">Nombre del combo</label>
+        <input id="cbNombre" style="${CB_INP}" placeholder="Ej: 12 tinturas + oxidante de regalo" value="${combo ? escCombo(combo.nombre) : ''}">
+
+        <label style="${CB_LBL}">1) ¿Qué tiene que llevar el cliente? <span style="font-weight:normal;color:#777;">(tienen que cumplirse todos)</span></label>
+        <div id="cbReqsBox"></div>
+        <button type="button" onclick="cbAddReq()" style="padding:6px 12px;border:1px dashed #6366f1;border-radius:8px;background:#f5f5ff;color:#4f46e5;cursor:pointer;margin-top:4px;">➕ Agregar otro requisito (ej: shampoo + acondicionador)</button>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:14px;">
+            <input type="checkbox" id="cbRepetir" onchange="cbResumen()" ${combo && combo.repetir ? 'checked' : ''}> Repetir: un beneficio por cada grupo completo (24 tinturas = 2 regalos)
+        </label>
+
+        <label style="${CB_LBL}">2) Producto/s en promoción <span style="font-weight:normal;color:#777;">(si cargás varios, el cliente elige cuál; sale del stock de cada uno)</span></label>
+        <div id="cbRegalosBox" style="min-height:28px;"></div>
+        <input id="cbRegBuscar" style="${CB_INP}" placeholder="Buscar producto (ej: oxidante) y tocá para agregar..." oninput="cbBuscar(this.value,'reg',0)" autocomplete="off">
+        <div id="cbRegSug" style="${CB_SUG}"></div>
+
+        <label style="${CB_LBL}">3) Beneficio</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+                <span style="font-size:12px;color:#555;">Unidades por beneficio</span>
+                <input id="cbRegaloCant" type="number" min="1" style="${CB_INP}" value="${combo ? combo.regalo_cantidad : 1}" oninput="cbResumen()">
+            </div>
+            <div>
+                <span style="font-size:12px;color:#555;">Tipo</span>
+                <select id="cbBenTipo" style="${CB_INP}" onchange="cbBenCambio()">
+                    <option value="gratis" ${benTipo === 'gratis' ? 'selected' : ''}>Sin cargo (100%)</option>
+                    <option value="pct" ${benTipo === 'pct' ? 'selected' : ''}>% de descuento</option>
+                    <option value="precio" ${benTipo === 'precio' ? 'selected' : ''}>Precio especial por unidad</option>
+                </select>
+            </div>
+        </div>
+        <div id="cbBenValorWrap" style="margin-top:8px;display:${benTipo === 'gratis' ? 'none' : 'block'};">
+            <span id="cbBenValorLbl" style="font-size:12px;color:#555;">${benTipo === 'precio' ? 'Precio especial por unidad ($)' : 'Descuento (%)'}</span>
+            <input id="cbBenValor" type="number" min="0" step="0.01" style="${CB_INP}" value="${benValor}" oninput="cbResumen()">
+        </div>
+
+        <label style="${CB_LBL}">4) Cupo total de unidades en promo <span style="font-weight:normal;color:#777;">(compartido entre los productos elegibles)</span></label>
+        <input id="cbCupo" type="number" min="1" style="${CB_INP}" value="${combo ? combo.cupo_total : ''}" placeholder="Ej: 40">
+        ${combo ? `<div style="font-size:12px;color:#777;margin-top:4px;">Ya entregados: ${parseInt(combo.cupo_usado, 10) || 0}. Para sumar más cupo, aumentá este total.</div>` : ''}
+
+        <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;">
+            <input type="checkbox" id="cbActivo" ${!combo || combo.activo ? 'checked' : ''}> Combo activo
+        </label>
+
+        <div id="cbResumen" style="margin-top:14px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:13px;line-height:1.5;"></div>
+
+        <div style="margin-top:18px;display:flex;gap:10px;justify-content:flex-end;">
+            <button onclick="document.getElementById('comboModalOverlay').remove()" style="padding:10px 16px;border:none;border-radius:8px;background:#eee;cursor:pointer;">Cancelar</button>
+            <button onclick="guardarCombo()" style="padding:10px 18px;border:none;border-radius:8px;background:var(--primary,#3498db);color:#fff;font-weight:bold;cursor:pointer;">Guardar</button>
+        </div>
+    </div>`;
+    document.body.appendChild(ov);
+    cbRenderReqs();
+    cbRenderRegalos();
+    cbResumen();
+}
+
+// ----- Requisitos -----
+function cbRenderReqs() {
+    const box = document.getElementById('cbReqsBox');
+    if (!box) return;
+    const catOpts = (sel) => (window._cbCats || []).map(c =>
+        `<option value="${c.id}" ${String(sel) === String(c.id) ? 'selected' : ''}>${escCombo(c.nombre)}</option>`).join('');
+    const selStyle = 'padding:9px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box;';
+    box.innerHTML = window._cbReqs.map((r, i) => {
+        const tipoSel = `<select onchange="cbReqTipo(${i}, this.value)" style="${selStyle}">
+            <option value="categoria" ${r.tipo !== 'producto' ? 'selected' : ''}>Categoría</option>
+            <option value="producto" ${r.tipo === 'producto' ? 'selected' : ''}>Producto</option></select>`;
+        let destino;
+        if (r.tipo === 'producto') {
+            destino = `<div style="flex:1;min-width:170px;">
+                ${r.id ? `<div style="font-size:13px;color:#166534;padding:6px 0;">✔ ${escCombo(r.nombre)} <a href="#" onclick="cbReqLimpiar(${i});return false;" style="margin-left:6px;color:#3498db;">cambiar</a></div>`
+                       : `<input id="cbReqBuscar_${i}" placeholder="Buscar producto..." oninput="cbBuscar(this.value,'req',${i})" autocomplete="off" style="${CB_INP}">
+                          <div id="cbReqSug_${i}" style="${CB_SUG}"></div>`}
+            </div>`;
+        } else {
+            destino = `<select onchange="cbReqCat(${i}, this)" style="${selStyle}flex:1;min-width:170px;">
+                <option value="">Elegir categoría...</option>${catOpts(r.id)}</select>`;
+        }
+        const qty = `<input type="number" min="1" value="${r.cantidad || ''}" oninput="cbReqCant(${i}, this.value)" style="${selStyle}width:70px;" title="Cantidad">`;
+        const del = window._cbReqs.length > 1
+            ? `<button type="button" onclick="cbDelReq(${i})" style="padding:6px 10px;border:none;border-radius:8px;background:#fdecea;color:#c0392b;cursor:pointer;" title="Quitar">✕</button>` : '';
+        return `<div style="${i > 0 ? 'margin-top:6px;' : ''}">
+            ${i > 0 ? '<div style="font-size:12px;color:#888;margin-bottom:4px;">+ y además</div>' : ''}
+            <div style="display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap;">${qty}<span style="padding-top:9px;font-size:13px;">de</span>${tipoSel}${destino}${del}</div>
+        </div>`;
+    }).join('');
+}
+function cbAddReq() { window._cbReqs.push({ tipo: 'producto', id: '', nombre: '', cantidad: 1 }); cbRenderReqs(); cbResumen(); }
+function cbDelReq(i) { window._cbReqs.splice(i, 1); cbRenderReqs(); cbResumen(); }
+function cbReqTipo(i, t) { const r = window._cbReqs[i]; if (!r) return; r.tipo = t; r.id = ''; r.nombre = ''; cbRenderReqs(); cbResumen(); }
+function cbReqCat(i, sel) {
+    const r = window._cbReqs[i]; if (!r) return;
+    r.id = sel.value ? parseInt(sel.value, 10) : '';
+    r.nombre = sel.value ? sel.options[sel.selectedIndex].textContent : '';
+    cbResumen();
+}
+function cbReqCant(i, v) { const r = window._cbReqs[i]; if (!r) return; r.cantidad = parseInt(v, 10) || 0; cbResumen(); }
+function cbReqLimpiar(i) { const r = window._cbReqs[i]; if (!r) return; r.id = ''; r.nombre = ''; cbRenderReqs(); cbResumen(); }
+
+// ----- Productos en promo (regalos) -----
+function cbRenderRegalos() {
+    const box = document.getElementById('cbRegalosBox');
+    if (!box) return;
+    box.innerHTML = window._cbRegalos.length
+        ? window._cbRegalos.map((r, i) =>
+            `<span style="display:inline-flex;align-items:center;gap:6px;background:#ecfdf5;border:1px solid #86efac;border-radius:16px;padding:4px 10px;margin:3px 4px 3px 0;font-size:13px;">${escCombo(r.nombre)}
+              <a href="#" onclick="cbDelReg(${i});return false;" style="color:#c0392b;text-decoration:none;font-weight:bold;">✕</a></span>`).join('')
+        : '<span style="color:#888;font-size:13px;">Ningún producto elegido</span>';
+}
+function cbDelReg(i) { window._cbRegalos.splice(i, 1); cbRenderRegalos(); cbPintarSugerencias('reg', 0); cbResumen(); }
+
+// ----- Buscador de productos (compartido por requisitos y regalos) -----
+let _cbTimer = null;
+function cbBuscar(texto, destino, idx) {
+    clearTimeout(_cbTimer);
+    const box = document.getElementById(destino === 'req' ? `cbReqSug_${idx}` : 'cbRegSug');
+    if (!box) return;
+    if (!texto || texto.trim().length < 2) { box.style.display = 'none'; return; }
+    _cbTimer = setTimeout(async () => {
+        const { data } = await supabase.from('promociones').select('id, nombre, stock').ilike('nombre', `%${texto.trim()}%`).order('nombre').limit(30);
+        window._cbResultados = data || [];
+        cbPintarSugerencias(destino, idx);
+    }, 250);
+}
+
+function cbPintarSugerencias(destino, idx) {
+    const box = document.getElementById(destino === 'req' ? `cbReqSug_${idx}` : 'cbRegSug');
+    if (!box) return;
+    const res = window._cbResultados || [];
+    const input = document.getElementById(destino === 'req' ? `cbReqBuscar_${idx}` : 'cbRegBuscar');
+    if (!input || !input.value || input.value.trim().length < 2) { box.style.display = 'none'; return; }
+    if (!res.length) { box.innerHTML = '<div style="padding:8px;color:#888;">Sin resultados</div>'; box.style.display = 'block'; return; }
+    const yaElegido = (p) => destino === 'reg' && window._cbRegalos.some(r => String(r.id) === String(p.id));
+    let html = '';
+    if (destino === 'reg') {
+        const nuevos = res.filter(p => !yaElegido(p));
+        if (nuevos.length > 1) html += `<div onclick="cbElegir('reg',0,-1)" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #eee;background:#f5f5ff;color:#4f46e5;font-weight:bold;">➕ Agregar los ${nuevos.length} resultados</div>`;
+    }
+    html += res.map((p, i) => {
+        const ya = yaElegido(p);
+        return `<div ${ya ? '' : `onclick="cbElegir('${destino}',${idx},${i})"`} style="padding:8px 10px;border-bottom:1px solid #f1f1f1;${ya ? 'color:#aaa;' : 'cursor:pointer;'}">${ya ? '✔ ' : ''}${escCombo(p.nombre)} <span style="color:#888;font-size:12px;">(stock ${p.stock ?? 0})</span></div>`;
+    }).join('');
+    box.innerHTML = html;
+    box.style.display = 'block';
+}
+
+function cbElegir(destino, idx, i) {
+    const res = window._cbResultados || [];
+    if (destino === 'req') {
+        const p = res[i]; const r = window._cbReqs[idx];
+        if (!p || !r) return;
+        r.id = p.id; r.nombre = p.nombre;
+        cbRenderReqs(); cbResumen();
+        return;
+    }
+    const agregar = (p) => { if (p && !window._cbRegalos.some(r => String(r.id) === String(p.id))) window._cbRegalos.push({ id: p.id, nombre: p.nombre }); };
+    if (i === -1) res.forEach(agregar); else agregar(res[i]);
+    cbRenderRegalos();
+    cbPintarSugerencias('reg', 0);
+    cbResumen();
+}
+
+// ----- Beneficio y resumen -----
+function cbBenCambio() {
+    const t = document.getElementById('cbBenTipo').value;
+    document.getElementById('cbBenValorWrap').style.display = t === 'gratis' ? 'none' : 'block';
+    document.getElementById('cbBenValorLbl').textContent = t === 'precio' ? 'Precio especial por unidad ($)' : 'Descuento (%)';
+    cbResumen();
+}
+
+function cbBeneficioActual() {
+    const t = document.getElementById('cbBenTipo').value;
+    const v = parseFloat(document.getElementById('cbBenValor').value);
+    if (t === 'gratis') return { tipo: 'pct', pct: 100, precio: null, txt: 'sin cargo' };
+    if (t === 'pct') return { tipo: 'pct', pct: v, precio: null, txt: `con ${isNaN(v) ? '?' : v}% de descuento` };
+    return { tipo: 'precio', pct: null, precio: v, txt: `a precio especial ($${isNaN(v) ? '?' : comboMoney(v)} c/u)` };
+}
+
+function cbResumen() {
+    const el = document.getElementById('cbResumen');
+    if (!el) return;
+    const reqs = window._cbReqs.filter(r => r.id !== '' && r.id !== null && r.cantidad > 0)
+        .map(r => `<b>${r.cantidad}</b> de <b>${escCombo(r.nombre)}</b>`);
+    const regalos = window._cbRegalos;
+    const cant = parseInt(document.getElementById('cbRegaloCant').value, 10) || 1;
+    const repetir = document.getElementById('cbRepetir').checked;
+    const ben = cbBeneficioActual();
+    if (!reqs.length || !regalos.length) { el.innerHTML = '<span style="color:#777;">📋 Completá los pasos para ver el resumen del combo.</span>'; return; }
+    const que = regalos.length > 1
+        ? `<b>${cant}</b> unidad(es) a elección entre: ${regalos.map(r => escCombo(r.nombre)).join(' / ')}`
+        : `<b>${cant} × ${escCombo(regalos[0].nombre)}</b>`;
+    el.innerHTML = `📋 <b>Resumen:</b> si el cliente lleva ${reqs.join(' + ')} → ${que} ${ben.txt}${repetir ? ' (se repite por cada grupo completo)' : ' (una sola vez por pedido)'}.`;
+}
+
+async function guardarCombo() {
+    const id = document.getElementById('cbId').value;
+    const nombre = document.getElementById('cbNombre').value.trim();
+    const regaloCant = parseInt(document.getElementById('cbRegaloCant').value, 10);
+    const cupo = parseInt(document.getElementById('cbCupo').value, 10);
+    const ben = cbBeneficioActual();
+    const reqs = window._cbReqs.map(r => ({ tipo: r.tipo === 'producto' ? 'producto' : 'categoria', id: r.id, nombre: r.nombre, cantidad: parseInt(r.cantidad, 10) || 0 }));
+    const regalos = window._cbRegalos.map(r => ({ id: r.id, nombre: r.nombre }));
+
+    if (!nombre) return alert('Poné un nombre al combo.');
+    if (!reqs.length || reqs.some(r => r.id === '' || r.id === null || r.id === undefined)) return alert('Completá todos los requisitos (elegí la categoría o el producto en cada fila).');
+    if (reqs.some(r => r.cantidad < 1)) return alert('Indicá la cantidad de cada requisito (mínimo 1).');
+    if (!regalos.length) return alert('Elegí al menos un producto en promoción.');
+    if (!regaloCant || regaloCant < 1) return alert('Indicá las unidades por beneficio.');
+    if (ben.tipo === 'pct' && (isNaN(ben.pct) || ben.pct <= 0 || ben.pct > 100)) return alert('El descuento debe estar entre 1 y 100.');
+    if (ben.tipo === 'precio' && (isNaN(ben.precio) || ben.precio < 0)) return alert('Indicá el precio especial por unidad.');
+    if (!cupo || cupo < 1) return alert('Indicá el cupo total de unidades en promo.');
+
+    const catReq = reqs.find(r => r.tipo === 'categoria');
+    const payload = {
+        nombre,
+        requisitos: reqs,
+        regalos,
+        beneficio_tipo: ben.tipo,
+        descuento_pct: ben.pct,
+        precio_especial: ben.precio,
+        regalo_cantidad: regaloCant,
+        repetir: document.getElementById('cbRepetir').checked,
+        cupo_total: cupo,
+        activo: document.getElementById('cbActivo').checked,
+        // Columnas históricas (se mantienen completas por compatibilidad)
+        categoria_id: catReq ? catReq.id : null,
+        categoria_nombre: catReq ? catReq.nombre : null,
+        unidades_requeridas: reqs[0].cantidad,
+        regalo_producto_id: regalos[0].id,
+        regalo_nombre: regalos.map(r => r.nombre).join(' / ')
+    };
+    const res = id
+        ? await supabase.from('combos').update(payload).eq('id', id)
+        : await supabase.from('combos').insert([{ ...payload, cupo_usado: 0 }]);
+    if (res.error) return alert('Error al guardar: ' + res.error.message + '\n\n¿Ejecutaste la migración SQL de combos (columnas requisitos, regalos, beneficio_tipo, precio_especial)?');
+
+    document.getElementById('comboModalOverlay').remove();
+    await cargarCombos();
+    renderCombosList();
+    if (typeof showToast === 'function') showToast('✅ Combo guardado');
+}
+
+// Agrega al carrito (nuevo pedido) el producto en promo elegido. productoId es opcional (si no, usa el primero).
+async function agregarRegaloComboSeleccion(comboId, cant, productoId) {
+    const c = (window.combosActivos || []).find(x => x.id == comboId);
+    if (!c) return;
+    const regalos = comboRegalos(c);
+    const r = regalos.find(x => String(x.id) === String(productoId)) || regalos[0];
+    if (!r) return;
+    const p = await getPromoById(r.id);
+    if (!p) return alert('No se encontró el producto de regalo.');
+    window.productosPorId[p.id] = p;
+    const ex = selectedProducts.find(x => x.id == p.id);
+    const actual = ex ? ex.cantidad : 0;
+    const nueva = Math.min(actual + cant, p.stock || 0);
+    if (nueva <= actual) return alert('Sin stock disponible de "' + p.nombre + '".');
+    const pv = precioVigente(p, nueva);
+    if (ex) { ex.cantidad = nueva; ex.precio = pv.precio; ex.promo = pv.promo; }
+    else selectedProducts.push({ id: p.id, nombre: p.nombre, cantidad: nueva, precio: pv.precio, promo: pv.promo });
+    renderSelectedProducts();
+}
+
 // ==================== FUNCIONES DE CONTROL DE CANTIDAD ====================
 
 // Genera el HTML para el control de cantidad con botones.
@@ -4180,6 +4995,14 @@ function updateSubtotal(id, price, stock){
     
     input.value = qty; 
     
+    const prodInfo = window.productosPorId[id];
+    if (prodInfo) {
+        const pv = precioVigente(prodInfo, Math.max(qty, 1));
+        price = pv.precio;
+        input.setAttribute('data-price', pv.precio);
+        const pc = document.getElementById(`pv_${id}`);
+        if (pc) pc.innerHTML = precioCellHTML(prodInfo, pv);
+    }
     const sub = document.getElementById(`sub_${id}`);
     if(sub) sub.textContent = `$${(qty*price).toFixed(2)}`;
     
@@ -4208,18 +5031,27 @@ function updateSelectedProductsFromModal() {
     inputs.forEach(inp => {
         const prodId = parseInt(inp.id.replace('prod_',''), 10);
         const qty = parseInt(inp.value, 10) || 0;
-        const price = parseFloat(inp.getAttribute('data-price')) || 0;
+        let price = parseFloat(inp.getAttribute('data-price')) || 0;
+        let esPromo = false;
+        const infoProd = window.productosPorId[prodId];
+        if (infoProd && qty > 0) {
+            const pv = precioVigente(infoProd, qty);
+            price = pv.precio;
+            esPromo = pv.promo;
+        }
         
         const existingIndex = selectedProducts.findIndex(p => p.id === prodId);
 
         if (qty > 0) {
             if (existingIndex !== -1) {
                 selectedProducts[existingIndex].cantidad = qty;
+                selectedProducts[existingIndex].precio = price;
+                selectedProducts[existingIndex].promo = esPromo;
             } else {
                 // Producto nuevo: obtener nombre del DOM
                 const row = inp.closest('tr');
                 const nombre = row && row.cells.length > 0 ? row.cells[0].textContent : `Producto ${prodId}`; 
-                selectedProducts.push({ id: prodId, nombre: nombre, cantidad: qty, precio: price });
+                selectedProducts.push({ id: prodId, nombre: nombre, cantidad: qty, precio: price, promo: esPromo });
             }
         } else {
             // Cantidad 0: eliminar de la selección si ya existía
@@ -4246,6 +5078,8 @@ if (selectProductsBtn) {
     selectProductsBtn.addEventListener('click', async () => {
         const { data: categoriasData } = await supabase.from('categorias').select('*').order('id');
         const { data: promos } = await supabase.from('promociones').select('*').order('id'); // Consulta directa
+        (promos || []).forEach(p => { window.productosPorId[p.id] = p; });
+        await cargarCombos();
         
         function renderFilteredPromos(categoryId = "") {
         // Guarda el estado actual antes de redibujar
@@ -4254,9 +5088,13 @@ if (selectProductsBtn) {
             updateSelectedProductsFromModal();
         }
 
+        const _catSel = (categoriasData || []).find(c => String(c.id) === String(categoryId));
+        const esCatPromos = !!(_catSel && esCategoriaPromos(_catSel));
         let filteredPromos = (!categoryId)
             ? promos
-            : promos.filter(p => String(p.categoria_id) === String(categoryId));
+            : esCatPromos
+                ? promos.filter(p => promoVigente(p) || String(p.categoria_id) === String(categoryId))
+                : promos.filter(p => String(p.categoria_id) === String(categoryId));
 
         let html = `
             <div style="
@@ -4328,6 +5166,8 @@ if (selectProductsBtn) {
                 </select>
             </div>
 
+            ${esCatPromos ? comboFlyersHTML(window.combosActivos) : ''}
+
             <div style="
                 overflow-y:auto;
                 max-height:70vh;
@@ -4355,12 +5195,14 @@ if (selectProductsBtn) {
         for (const p of filteredPromos) {
             const qty = getSelectedQty(p.id);
             const stockMax = p.stock ?? 0;
-            const price = Number(p.precio);
+            window.productosPorId[p.id] = p;
+            const pv0 = precioVigente(p, Math.max(qty, 1));
+            const price = pv0.precio;
 
             html += `
                 <tr style="border-bottom:1px solid #eee;">
                     <td style="padding:10px;">${safeText(p.nombre || p.descripcion || '')}</td>
-                    <td style="padding:10px;text-align:right;">$${price.toFixed(2)}</td>
+                    <td id="pv_${p.id}" style="padding:10px;text-align:right;">${precioCellHTML(p, pv0)}</td>
                     <td style="padding:10px;text-align:center;">${stockMax}</td>
                     <td style="padding:10px;text-align:center;">
                         ${renderQuantityControls(p.id, qty, price, stockMax)}
@@ -4430,14 +5272,15 @@ if (selectProductsBtn) {
 
 function renderSelectedProducts(){
     const c = document.getElementById('selectedProductsContainer');
+    const resCombos = aplicarCombos(selectedProducts);
     if(!selectedProducts.length){ c.innerHTML = '<span class="small-muted">No hay productos seleccionados</span>'; return; }
     let html = `<table class="table"><thead><tr><th>Producto</th><th>Cantidad</th><th>Subtotal</th></tr></thead><tbody>`;
     selectedProducts.forEach(p=>{
-        html += `<tr><td>${safeText(p.nombre)}</td><td>${p.cantidad}</td><td>$${(p.precio*p.cantidad).toFixed(2)}</td></tr>`;
+        html += `<tr><td>${safeText(p.nombre)}${p.combo_id ? ' 🎁' : ''}</td><td>${p.cantidad}</td><td>$${(p.precio*p.cantidad).toFixed(2)}</td></tr>`;
     });
     const total = selectedProducts.reduce((s,p)=>s + p.precio * p.cantidad, 0);
     html += `<tr><td colspan="2" style="text-align:right"><strong>Total:</strong></td><td>$${total.toFixed(2)}</td></tr></tbody></table>`;
-    c.innerHTML = html;
+    c.innerHTML = html + bannerCombosHTML(resCombos.estado, 'agregarRegaloComboSeleccion');
 }
 async function getPromoById(id){
     // 🛡️ Evita un .eq('id', null/undefined) que PostgREST traduce como el texto
@@ -4472,18 +5315,31 @@ if (addOrderBtn) {
                 }
             }
 
-            // Descontar Stock
-            await Promise.all(selectedProducts.map((p, i) =>
-                supabase.from('promociones')
-                    .update({ stock: (promosActuales[i].stock || 0) - p.cantidad })
-                    .eq('id', p.id)
-            ));
+            // Reprecio con datos frescos (la promo pudo agotarse mientras armaban el pedido)
+            selectedProducts.forEach((p, i) => {
+                const pv = precioVigente(promosActuales[i], p.cantidad);
+                p.precio = pv.precio;
+                p.promo = pv.promo;
+            });
+
+            // Combos: reglas por volumen (cupo fresco desde la base)
+            await cargarCombos();
+            aplicarCombos(selectedProducts);
+
+            // Descontar stock (único, en unidades) y, si corresponde, el cupo de la promoción
+            await Promise.all(selectedProducts.map((p, i) => {
+                const upd = { stock: (promosActuales[i].stock || 0) - p.cantidad };
+                if (p.promo) upd.promo_cupo = Math.max(0, (parseInt(promosActuales[i].promo_cupo, 10) || 0) - p.cantidad);
+                return supabase.from('promociones').update(upd).eq('id', p.id);
+            }));
 
             const productosPayload = selectedProducts.map(p => ({ 
                 id: p.id, 
                 nombre: p.nombre, 
                 cantidad: p.cantidad, 
-                precio: p.precio 
+                precio: p.precio,
+                promo: !!p.promo,
+                ...(p.combo_id ? { combo_id: p.combo_id, combo_unid: p.combo_unid, precio_base: p.precio_base, _pc: p._pc, _pa_prev: p._pa_prev } : {})
             }));
             
             const total = productosPayload.reduce((s, x) => s + (x.precio * x.cantidad), 0);
@@ -4500,6 +5356,8 @@ if (addOrderBtn) {
 
             if (error) throw error;
 
+            const msgsCombo = await ajustarCuposCombos({}, mapaCombos(selectedProducts));
+
             // Limpieza y feedback
             if (document.getElementById('pedidoForm')) {
                 document.getElementById('pedidoForm').reset();
@@ -4512,6 +5370,7 @@ if (addOrderBtn) {
             if (typeof fetchPromos === 'function') await fetchPromos();
             
             showToast('Pedido agregado con éxito');
+            if (msgsCombo.length) alert(msgsCombo.join('\n'));
 
         } catch (err) {
             console.error("Error al agregar pedido:", err);
@@ -6473,6 +7332,10 @@ async function editOrderModal(pedido) {
     const localidades = locRes.data || [];
     const productosDB = prodRes.data || [];
     const categorias = catRes.data || [];
+    productosDB.forEach(p => { window.productosPorId[p.id] = p; });
+    await cargarCombos();
+    const origCombos = mapaCombos(pedido.productos);
+    let estadoCombos = [];
 
     // Clonamos los productos del pedido para edición y garantizamos campo descuento
     let productosPedido = (pedido.productos || []).map(pr => ({ ...pr, descuento: pr.descuento || 0 }));
@@ -6512,6 +7375,8 @@ async function editOrderModal(pedido) {
     function refreshTotals() {
         const el = document.getElementById('eoSum');
         if (el) el.innerHTML = sumHTML();
+        const ec = document.getElementById('eoCombos');
+        if (ec) ec.innerHTML = bannerCombosHTML(estadoCombos, 'window.__eoAddGift');
     }
 
     function refreshChips() {
@@ -6528,6 +7393,8 @@ async function editOrderModal(pedido) {
         const bruto = precio * cant, neto = bruto * (1 - d / 100);
         const q = el.querySelector('.eo-qty');
         if (q) q.value = cant;
+        const smPrecio = el.querySelector('.eo-item-name small');
+        if (smPrecio) smPrecio.textContent = `$${fmtARS(precio)} c/u${pr.promo ? ' · 🔥 promo' : ''}${pr.combo_id ? ' · 🎁 combo' : ''}`;
         const old = el.querySelector('.eo-old');
         if (old) { old.style.display = d > 0 ? 'block' : 'none'; old.textContent = `$${fmtARS(bruto)}`; }
         const tot = el.querySelector('.eo-item-total');
@@ -6550,10 +7417,46 @@ async function editOrderModal(pedido) {
         let msg = '';
         if (n > max) { n = max; msg = `Stock máximo alcanzado (${max})`; }
         pr.cantidad = n;
+        // Reprecio por cantidad (caja cerrada / promo) usando el producto actual
+        const infoP = productosDB.find(pdb => pdb.id == pr.id);
+        if (infoP) {
+            const lineaOrig = (pedido.productos || []).find(op => op.id == pr.id);
+            const permitirPromo = !!pr.promo || !lineaOrig;
+            const pv = precioVigente(infoP, n, (lineaOrig && lineaOrig.promo) ? (Number(lineaOrig.cantidad) || 0) : 0, !permitirPromo);
+            pr.precio = pv.precio;
+            pr.promo = pv.promo;
+        }
+        // Combos: puede cambiar el precio de otra línea (ej. el producto en promo)
+        const rrC = aplicarCombos(productosPedido, origCombos);
+        estadoCombos = rrC.estado;
+        if (rrC.cambio) productosPedido.forEach((_, i) => { if (i !== idx) refreshItem(i); });
         dirty = true;
         refreshItem(idx, msg);
         refreshTotals();
     }
+
+    window.__eoAddGift = function(comboId, cant, productoId) {
+        const c = (window.combosActivos || []).find(x => x.id == comboId);
+        if (!c) return;
+        const _regalos = comboRegalos(c);
+        const _r = _regalos.find(x => String(x.id) === String(productoId)) || _regalos[0];
+        if (!_r) return;
+        const prod = productosDB.find(p => p.id == _r.id);
+        if (!prod) return alert('No se encontró el producto en promoción.');
+        const ex = productosPedido.find(p => p.id == prod.id);
+        const actual = ex ? (Number(ex.cantidad) || 0) : 0;
+        const max = Math.max(stockBaseOf({ id: prod.id }), 0);
+        const nueva = Math.min(actual + cant, max);
+        if (nueva <= actual) return alert('Sin stock disponible de "' + prod.nombre + '".');
+        let linea = ex;
+        if (!linea) { linea = { id: prod.id, nombre: prod.nombre, cantidad: nueva, precio: prod.precio, descuento: 0 }; productosPedido.push(linea); }
+        else linea.cantidad = nueva;
+        const pvG = precioVigente(prod, linea.cantidad);
+        linea.precio = pvG.precio;
+        linea.promo = pvG.promo;
+        dirty = true;
+        renderModal();
+    };
 
     function itemHTML(pr, idx) {
         const base = stockBaseOf(pr), max = Math.max(base, 1);
@@ -6563,7 +7466,7 @@ async function editOrderModal(pedido) {
         return `
         <div class="eo-item" data-idx="${idx}">
             <div class="eo-item-top">
-                <div class="eo-item-name">${safeText(pr.nombre)}<small>$${fmtARS(precio)} c/u</small></div>
+                <div class="eo-item-name">${safeText(pr.nombre)}<small>$${fmtARS(precio)} c/u${pr.promo ? ' · 🔥 promo' : ''}${pr.combo_id ? ' · 🎁 combo' : ''}</small></div>
                 <button type="button" class="eo-del" data-idx="${idx}" aria-label="Quitar producto">🗑️</button>
             </div>
             <div class="eo-item-ctrl">
@@ -6594,6 +7497,7 @@ async function editOrderModal(pedido) {
     }
 
     function renderModal(scrollPos = null) {
+        estadoCombos = aplicarCombos(productosPedido, origCombos).estado;
         const prevBody = document.querySelector('.eo-body');
         if (scrollPos === null) scrollPos = prevBody ? prevBody.scrollTop : 0;
 
@@ -6635,6 +7539,7 @@ async function editOrderModal(pedido) {
                     <h3>🛒 Productos (${productosPedido.length})</h3>
                     <button type="button" class="eo-add" id="openProductSelector">➕ Agregar productos</button>
                     ${productosPedido.length ? productosPedido.map(itemHTML).join('') : '<div class="eo-empty">El pedido no tiene productos</div>'}
+                    <div id="eoCombos">${bannerCombosHTML(estadoCombos, 'window.__eoAddGift')}</div>
                 </div>
 
                 <div class="eo-card">
@@ -6824,7 +7729,8 @@ async function editOrderModal(pedido) {
                 btn.onclick = () => {
                     const prod = productosDB.find(p => p.id == btn.dataset.id);
                     if (!prod || productosPedido.some(pp => pp.id == prod.id)) return;
-                    productosPedido.push({ id: prod.id, nombre: prod.nombre, cantidad: 1, precio: prod.precio, descuento: 0 });
+                    const pvNuevo = precioVigente(prod, 1);
+                    productosPedido.push({ id: prod.id, nombre: prod.nombre, cantidad: 1, precio: pvNuevo.precio, promo: pvNuevo.promo, descuento: 0 });
                     dirty = true;
                     const top = lista.scrollTop;
                     renderModal();       // actualiza el pedido que está detrás
@@ -6853,6 +7759,8 @@ async function editOrderModal(pedido) {
         productosOriginal.forEach(p => mapOriginal[p.id] = p.cantidad);
         const mapNuevo = {};
         nuevosProductos.forEach(p => mapNuevo[p.id] = p.cantidad);
+        const promoOrig = {}; productosOriginal.forEach(p => promoOrig[p.id] = p.promo ? p.cantidad : 0);
+        const promoNuevo = {}; nuevosProductos.forEach(p => promoNuevo[p.id] = p.promo ? p.cantidad : 0);
         const allIds = new Set([...productosOriginal.map(p => p.id), ...nuevosProductos.map(p => p.id)]);
 
         for (const prodId of allIds) {
@@ -6868,13 +7776,16 @@ async function editOrderModal(pedido) {
             const cantOriginal = mapOriginal[prodId] || 0;
             const cantNueva = mapNuevo[prodId] || 0;
             const dif = cantNueva - cantOriginal;
-            if (dif !== 0) {
+            const difPromo = (promoNuevo[prodId] || 0) - (promoOrig[prodId] || 0);
+            if (dif !== 0 || difPromo !== 0) {
                 const { data: promo, error: promoError } = await supabase.from('promociones').select('*').eq('id', prodId).single();
                 if (promoError || !promo) {
                     console.warn('No se encontró la promoción para ajustar stock:', prodId, promoError);
                     continue;
                 }
-                await supabase.from('promociones').update({ stock: (promo.stock || 0) - dif }).eq('id', prodId);
+                const updEd = { stock: (promo.stock || 0) - dif };
+                if (difPromo !== 0) updEd.promo_cupo = Math.max(0, (parseInt(promo.promo_cupo, 10) || 0) - difPromo);
+                await supabase.from('promociones').update(updEd).eq('id', prodId);
             }
         }
 
@@ -6894,10 +7805,14 @@ async function editOrderModal(pedido) {
 
         if (error) return alert(error.message);
 
+        let msgsC = [];
+        try { msgsC = await ajustarCuposCombos(mapaCombos(productosOriginal), mapaCombos(nuevosProductos)); } catch (e) { console.warn('Cupo de combos:', e); }
+
         closeModal();
         await fetchOrders();
         await fetchPromos();
         showToast('Pedido actualizado correctamente');
+        if (msgsC.length) alert(msgsC.join('\n'));
     };
 
     renderModal();
@@ -7031,10 +7946,15 @@ async function deleteOrder(id) {
             // Verificamos que la promo exista realmente en la DB antes de actualizar
             if (promo) {
                 const newStock = (promo.stock || 0) + pr.cantidad;
-                await supabase.from('promociones').update({ stock: newStock }).eq('id', pr.id);
+                const updDel = { stock: newStock };
+                if (pr.promo) updDel.promo_cupo = (parseInt(promo.promo_cupo, 10) || 0) + pr.cantidad;
+                await supabase.from('promociones').update(updDel).eq('id', pr.id);
             }
         }
     }
+
+    // Devolver el cupo de combos que tenía el pedido
+    try { await ajustarCuposCombos(mapaCombos(data.productos), {}); } catch (e) { console.warn('Cupo de combos:', e); }
 
     // Borrar el pedido de la tabla
     await supabase.from('pedidos').delete().eq('id', id);
@@ -8378,6 +9298,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     //    aquí para evitar otros errores de "not defined" si los usas al inicio)
   
     fetchLocalidades();
+    cargarCombos();
     fetchPromos();
     actualizarContadorPromosTotal();
     // NO llamar fetchOrders() al inicio — se carga solo cuando se elige localidad

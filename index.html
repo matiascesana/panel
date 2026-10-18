@@ -1629,7 +1629,7 @@ button[onclick*="delete"] {
 
             <div style="display:flex; gap:10px; margin-top:10px;">
                 <button onclick="document.getElementById('addPromoModal').style.display='none'" style="flex:1; padding:12px; border:none; border-radius:8px; cursor:pointer; background:#eee;">Cancelar</button>
-                <button onclick="guardarNuevaPromo()" style="flex:1; padding:12px; border:none; border-radius:8px; cursor:pointer; background:var(--primary); color:white; font-weight:bold;">Guardar Promoción</button>
+                <button id="btnGuardarNuevaPromo" onclick="guardarNuevaPromo()" style="flex:1; padding:12px; border:none; border-radius:8px; cursor:pointer; background:var(--primary); color:white; font-weight:bold;">Guardar Promoción</button>
             </div>
         </div>
     </div>
@@ -1935,7 +1935,24 @@ document.getElementById("addPromoBtn").addEventListener("click", async () => {
 
 
 
+// Evita crear la promoción duplicada: la subida de imagen demora y un segundo clic
+// (o doble tap) volvía a ejecutar el guardado completo e insertaba otra fila.
+let guardandoNuevaPromo = false;
 async function guardarNuevaPromo() {
+    if (guardandoNuevaPromo) return;
+    guardandoNuevaPromo = true;
+    const btn = document.getElementById('btnGuardarNuevaPromo');
+    const textoOriginal = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; btn.style.opacity = '0.6'; btn.style.cursor = 'not-allowed'; }
+    try {
+        await _guardarNuevaPromoImpl();
+    } finally {
+        guardandoNuevaPromo = false;
+        if (btn) { btn.disabled = false; btn.textContent = textoOriginal; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+    }
+}
+
+async function _guardarNuevaPromoImpl() {
     const nombre = document.getElementById('newPromoNombre').value.trim();
     const precio = parseFloat(document.getElementById('newPromoPrecio').value);
     const precioAnterior = parseFloat(document.getElementById('newPromoPrecioAnterior').value) || 0;
@@ -11723,7 +11740,36 @@ function confirmarImagenCompra() {
     cerrarModalCompraImagen();
 }
 
-function agregarNuevoProductoACompra() {
+let agregandoProdNuevoCompra = false;
+async function agregarNuevoProductoACompra() {
+    if (agregandoProdNuevoCompra) return;
+    agregandoProdNuevoCompra = true;
+    try {
+        const nombre = document.getElementById('compraNuevoNombre').value.trim();
+        if (nombre) {
+            const nombreNorm = nombre.toLowerCase();
+            if (comprasItemsActuales.some(it => it.esNuevo && String(it.nombre || '').trim().toLowerCase() === nombreNorm)) {
+                alert('Ya agregaste un producto nuevo con ese nombre en esta factura.');
+                return;
+            }
+            try {
+                const patron = nombre.replace(/([%_\\])/g, '\\$1');
+                const { data: existentes } = await supabase.from('promociones').select('id, nombre').ilike('nombre', patron).limit(1);
+                if (existentes && existentes.length > 0 &&
+                    !confirm('Ya existe un producto llamado "' + existentes[0].nombre + '".\n\nSi es el mismo, cancelá y buscalo en la factura para sumarle stock.\n¿Querés crearlo igual como producto nuevo?')) {
+                    return;
+                }
+            } catch (e) {
+                console.warn('No se pudo verificar si el producto ya existe:', e);
+            }
+        }
+        _agregarNuevoProductoACompraInterno();
+    } finally {
+        agregandoProdNuevoCompra = false;
+    }
+}
+
+function _agregarNuevoProductoACompraInterno() {
     const nombre = document.getElementById('compraNuevoNombre').value.trim();
     const categoriaId = document.getElementById('compraNuevoCategoria').value;
     const precioVenta = parseFloat(document.getElementById('compraNuevoPrecioVenta').value);
@@ -11875,7 +11921,24 @@ function calcularTotalCompraFactura() {
 
 /* ---------- Guardar la factura completa ---------- */
 
+// Evita duplicados: la subida de imágenes y los inserts demoran, y un segundo clic
+// mientras tanto volvía a crear los productos nuevos y la factura completa.
+let guardandoCompra = false;
 async function guardarCompra() {
+    if (guardandoCompra) return;
+    guardandoCompra = true;
+    const btn = document.getElementById('modalCompraBtnGuardar');
+    const textoOriginal = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; btn.style.opacity = '0.6'; btn.style.cursor = 'not-allowed'; }
+    try {
+        await _guardarCompraImpl();
+    } finally {
+        guardandoCompra = false;
+        if (btn) { btn.disabled = false; btn.textContent = textoOriginal; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+    }
+}
+
+async function _guardarCompraImpl() {
     if (comprasItemsActuales.length === 0) {
         alert('Agregue al menos un producto a la factura.');
         return;
@@ -11897,6 +11960,20 @@ async function guardarCompra() {
 
         for (const item of comprasItemsActuales) {
             if (item.esNuevo) {
+                // Reintento tras un error: si este producto ya se creó en un intento anterior,
+                // se reutiliza (ya tiene su stock inicial) en vez de crearlo otra vez duplicado.
+                if (item.productoIdCreado) {
+                    itemsParaGuardar.push({
+                        esNuevo: true,
+                        productoId: item.productoIdCreado,
+                        nombre: item.nombre,
+                        cantidad: item.cantidad,
+                        costoUnitario: item.bonificado ? 0 : (item.costoUnitario || 0),
+                        bonificado: !!item.bonificado,
+                        precioVentaCargado: item.precioVenta
+                    });
+                    continue;
+                }
                 // --- PRODUCTO NUEVO: se crea en promociones con stock inicial = cantidad comprada ---
                 let imagenNombre = null;
                 let imagenUrl = null;
@@ -11932,6 +12009,8 @@ async function guardarCompra() {
 
                 if (insertError) throw insertError;
 
+                item.productoIdCreado = nuevoProducto.id; // recordar que ya existe (por si hay que reintentar)
+
                 itemsParaGuardar.push({
                     esNuevo: true,
                     productoId: nuevoProducto.id,
@@ -11956,7 +12035,10 @@ async function guardarCompra() {
 
                 if (fetchError) throw fetchError;
 
-                const cantidadOriginal = esEdicion ? (Number(item.cantidadOriginal) || 0) : 0;
+                // Si un intento anterior ya aplicó esta línea, solo se suma la diferencia
+                const cantidadOriginal = (item._cantAplicada !== undefined)
+                    ? item._cantAplicada
+                    : (esEdicion ? (Number(item.cantidadOriginal) || 0) : 0);
                 const deltaCantidad = (Number(item.cantidad) || 0) - cantidadOriginal;
                 const nuevoStock = Math.max(0, (Number(actual.stock) || 0) + deltaCantidad);
                 const updateData = { stock: nuevoStock };
@@ -11985,6 +12067,7 @@ async function guardarCompra() {
                     .eq('id', item.id);
 
                 if (updateError) throw updateError;
+                item._cantAplicada = Number(item.cantidad) || 0;
 
                 itemsParaGuardar.push({
                     esNuevo: false,
@@ -12014,6 +12097,8 @@ async function guardarCompra() {
                 }
             }
         }
+
+        comprasItemsEliminadosEdicion = []; // ya revertidos: un reintento no debe revertirlos de nuevo
 
         const total = calcularTotalCompraFactura();
 

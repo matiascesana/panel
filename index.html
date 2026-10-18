@@ -1130,6 +1130,13 @@ button[onclick*="delete"] {
             <input type="number" id="modalPrecioCaja" min="0" step="0.01" placeholder="Precio total de la caja">
         </div>
 
+        <div style="margin-top:12px;padding:10px;border:1px solid #cfe3ff;border-radius:8px;background:#f2f8ff;">
+            <b>📊 Precios por cantidad (mayorista)</b>
+            <p style="font-size:12px;color:#777;margin:4px 0 8px;">Usa el mismo stock en unidades. Al llevar esa cantidad (o más) se aplica ese precio por unidad. Ej: desde 5 → $900, desde 10 → $800, desde 100 → $600. Dejar vacío si no aplica.</p>
+            <div id="modalEscalasList"></div>
+            <button type="button" onclick="agregarFilaEscala()" style="margin-top:6px;padding:6px 12px;background:#3498db;color:#fff;border:none;border-radius:6px;cursor:pointer;">➕ Agregar escala</button>
+        </div>
+
         <div style="margin-top:12px;padding:10px;border:1px solid #f0c419;border-radius:8px;background:#fffbe6;">
             <b>🔥 Promoción temporal</b>
             <p style="font-size:12px;color:#777;margin:4px 0 8px;">Usa el mismo stock del producto. Aparece en la categoría "Promociones" mientras esté activa y queden unidades de cupo.</p>
@@ -1387,7 +1394,7 @@ button[onclick*="delete"] {
     <h2>📈 Ganancia Neta</h2>
     <p style="color:#555;">
         Calcula la ganancia neta de un período: ventas facturadas en Pedidos, menos el costo de esos
-        mismos productos (según el último costo cargado en Compras), menos los gastos del mismo rango de fechas.
+        mismos productos (costo real de cada tanda cargada en Compras: lo bonificado cuesta $0 y lo comprado en promo, su precio de promo), menos los gastos del mismo rango de fechas.
     </p>
 
     <div class="card" style="flex-wrap:wrap; gap:10px; margin-bottom:15px;">
@@ -2799,6 +2806,7 @@ async function savePromotionChanges() {
                 stock: newStock,
                 unidades_por_caja: parseInt(document.getElementById('modalUpc').value, 10) || null,
                 precio_caja: parseFloat(document.getElementById('modalPrecioCaja').value) || null,
+                precios_escalonados: leerEscalasModal(),
                 promo_activa: document.getElementById('modalPromoActiva').checked,
                 promo_precio: parseFloat(document.getElementById('modalPromoPrecio').value) || null,
                 promo_cupo: parseInt(document.getElementById('modalPromoCupo').value, 10) || 0,
@@ -3183,6 +3191,7 @@ async function openEditModal(promoId) {
         document.getElementById('modalStock').value = promo.stock || 0;
         document.getElementById('modalUpc').value = promo.unidades_por_caja || '';
         document.getElementById('modalPrecioCaja').value = promo.precio_caja || '';
+        cargarEscalasModal(promo.precios_escalonados);
         document.getElementById('modalPromoActiva').checked = !!promo.promo_activa;
         document.getElementById('modalPromoPrecio').value = promo.promo_precio || '';
         document.getElementById('modalPromoCupo').value = promo.promo_cupo || '';
@@ -3791,6 +3800,10 @@ async function renderPromosByFilter(categoryIds = []) {
                 if (upc > 1 && Number(p.precio_caja) > 0) {
                     extra += `<div style="text-align:center;margin-top:2px;font-size:0.8em;color:#27ae60;">📦 Caja x${upc}: $${Number(p.precio_caja).toFixed(2)}</div>`;
                 }
+                const _esc = escalasDe(p);
+                if (_esc.length) {
+                    extra += `<div style="text-align:center;margin-top:2px;font-size:0.8em;color:#2980b9;">📊 ${_esc.map(e => 'x' + e.min + ': $' + e.precio.toFixed(2)).join(' · ')}</div>`;
+                }
                 return extra;
             })()}
 
@@ -4204,20 +4217,73 @@ function precioVigente(p, cant, cupoExtra, sinPromo) {
     if (!sinPromo && p.promo_activa && Number(p.promo_precio) > 0 && cant > 0 && cant <= cupo) {
         return { precio: Number(p.promo_precio), promo: true, caja: false };
     }
+    // Candidatos: precio por caja cerrada y escala por cantidad. Gana el más barato para el cliente.
+    let mejor = base, esCaja = false, escala = null;
     const upc = parseInt(p.unidades_por_caja, 10) || 0;
     const pc = Number(p.precio_caja) || 0;
     if (upc > 1 && pc > 0 && cant >= upc) {
         const pu = Math.round((pc / upc) * 10000) / 10000;
-        if (pu < base) return { precio: pu, promo: false, caja: true };
+        if (pu < mejor) { mejor = pu; esCaja = true; }
     }
-    return { precio: base, promo: false, caja: false };
+    const esc = escalasDe(p);
+    for (let i = 0; i < esc.length; i++) {
+        if (cant >= esc[i].min && esc[i].precio < mejor) { mejor = esc[i].precio; esCaja = false; escala = esc[i].min; }
+    }
+    return { precio: mejor, promo: false, caja: esCaja, escala: escala };
+}
+
+// ==================== PRECIOS POR CANTIDAD (ESCALAS) ====================
+// precios_escalonados (jsonb) = [{"min":5,"precio":900},{"min":10,"precio":800}, ...]  → todo sobre el MISMO stock.
+function escalasDe(p) {
+    let r = p && p.precios_escalonados;
+    if (typeof r === 'string') { try { r = JSON.parse(r); } catch (e) { r = null; } }
+    if (!Array.isArray(r)) return [];
+    return r.map(x => ({ min: parseInt(x.min, 10) || 0, precio: Number(x.precio) || 0 }))
+            .filter(x => x.min > 1 && x.precio > 0)
+            .sort((a, b) => a.min - b.min);
+}
+
+function agregarFilaEscala(min, precio) {
+    const cont = document.getElementById('modalEscalasList');
+    if (!cont) return;
+    const row = document.createElement('div');
+    row.className = 'escala-row';
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;';
+    row.innerHTML = `<span style="font-size:12px;">Desde</span>
+        <input type="number" class="escala-min" min="2" placeholder="Cant." style="width:80px;" value="${min || ''}">
+        <span style="font-size:12px;">u. → $</span>
+        <input type="number" class="escala-precio" min="0" step="0.01" placeholder="Precio c/u" style="width:110px;" value="${precio || ''}">
+        <button type="button" onclick="this.parentElement.remove()" style="background:#e74c3c;color:#fff;border:none;border-radius:6px;padding:4px 9px;cursor:pointer;">✖</button>`;
+    cont.appendChild(row);
+}
+
+function cargarEscalasModal(raw) {
+    const cont = document.getElementById('modalEscalasList');
+    if (!cont) return;
+    cont.innerHTML = '';
+    escalasDe({ precios_escalonados: raw }).forEach(e => agregarFilaEscala(e.min, e.precio));
+}
+
+function leerEscalasModal() {
+    const filas = document.querySelectorAll('#modalEscalasList .escala-row');
+    const out = [];
+    filas.forEach(f => {
+        const min = parseInt(f.querySelector('.escala-min').value, 10) || 0;
+        const precio = parseFloat(f.querySelector('.escala-precio').value) || 0;
+        if (min > 1 && precio > 0) out.push({ min, precio });
+    });
+    out.sort((a, b) => a.min - b.min);
+    return out.length ? out : null;
 }
 
 function precioCellHTML(p, pv) {
     let h = `$${Number(pv.precio).toFixed(2)}`;
     if (pv.promo) h += `<div style="font-size:11px;color:#d35400;font-weight:bold;">🔥 Promo · quedan ${parseInt(p.promo_cupo, 10) || 0}</div>`;
     else if (pv.caja) h += `<div style="font-size:11px;color:#27ae60;font-weight:bold;">📦 Precio por caja</div>`;
+    else if (pv.escala) h += `<div style="font-size:11px;color:#2980b9;font-weight:bold;">📊 Precio por cantidad (desde ${pv.escala} u.)</div>`;
     else {
+        const _esc = escalasDe(p);
+        if (_esc.length) h += `<div style="font-size:11px;color:#2980b9;">📊 ${_esc.map(e => 'x' + e.min + ': $' + e.precio.toFixed(2)).join(' · ')}</div>`;
         if (promoVigente(p)) h += `<div style="font-size:11px;color:#d35400;">🔥 Promo $${Number(p.promo_precio).toFixed(2)} (quedan ${parseInt(p.promo_cupo, 10) || 0})</div>`;
         const upc = parseInt(p.unidades_por_caja, 10) || 0;
         if (upc > 1 && Number(p.precio_caja) > 0) h += `<div style="font-size:11px;color:#777;">📦 x${upc}: $${(Number(p.precio_caja) / upc).toFixed(2)} c/u</div>`;
@@ -11463,6 +11529,7 @@ async function editarCompra(id) {
             cantidad: Number(it.cantidad) || 0,
             cantidadOriginal: Number(it.cantidad) || 0,
             costoUnitario: Number(it.costoUnitario) || 0,
+            bonificado: !!it.bonificado,
             nuevoPrecio: it.nuevoPrecio != null ? Number(it.nuevoPrecio) : '',
             yaExistiaEnFactura: true
         };
@@ -11697,7 +11764,7 @@ function renderCompraItemsList(highlightIdx = null) {
     container.innerHTML = comprasItemsActuales.map((item, idx) => `
         <div class="card compra-item-card ${idx === highlightIdx ? 'compra-item-nuevo' : ''}" style="align-items:center;">
             <div class="card-info">
-                <b>${escapeHtml(item.nombre)} ${item.esNuevo ? '<span style="color:#10b981; font-size:0.8em;">(NUEVO)</span>' : ''}</b>
+                <b>${escapeHtml(item.nombre)} ${item.esNuevo ? '<span style="color:#10b981; font-size:0.8em;">(NUEVO)</span>' : ''}${item.esTandaExtra ? ' <span style="color:#0ea5e9; font-size:0.8em;">(tanda adicional)</span>' : ''}${item.bonificado ? ' <span style="color:#b45309; font-size:0.8em;">🎁 bonificado</span>' : ''}</b>
                 ${!item.esNuevo ? `<span class="card-stock">Stock actual: ${item.stockActual} · Precio actual: $${item.precioActual}${item.yaExistiaEnFactura ? ` · Cantidad original en esta factura: ${item.cantidadOriginal}` : ''}</span>` : ''}
                 <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:4px;">
                     <label style="font-size:0.8em;">Cantidad:
@@ -11706,9 +11773,14 @@ function renderCompraItemsList(highlightIdx = null) {
                                ${idx === highlightIdx ? 'id="compraItemCantidadFoco"' : ''}>
                     </label>
                     <label style="font-size:0.8em;">Costo unitario ($):
-                        <input type="number" min="0" step="0.01" value="${item.costoUnitario || ''}" style="width:90px;"
+                        <input type="number" min="0" step="0.01" value="${item.bonificado ? 0 : (item.costoUnitario || '')}" style="width:90px;" ${item.bonificado ? 'disabled' : ''}
                                onchange="updateCompraItemField(${idx}, 'costoUnitario', this.value)">
                     </label>
+                    <label style="font-size:0.8em; display:flex; align-items:center; gap:4px; color:#b45309; font-weight:bold;" title="Marcalo si esta mercadería te la regalaron o bonificaron: queda guardada con costo $0 y la ganancia no se distorsiona cuando la vendas o la regales.">
+                        <input type="checkbox" ${item.bonificado ? 'checked' : ''} onchange="updateCompraItemField(${idx}, 'bonificado', this.checked)">
+                        🎁 Bonificado / regalado (costo $0)
+                    </label>
+                    ${!item.esNuevo ? `<button type="button" onclick="agregarTandaCompra(${idx})" title="Agregar otra línea del mismo producto con distinto costo (ej. una parte en promo)" style="background:#0ea5e9; color:white; border:none; padding:4px 10px; border-radius:6px; cursor:pointer; font-size:0.8em;">➕ Otra tanda (otro costo)</button>` : ''}
                     ${!item.esNuevo ? `
                     <label style="font-size:0.8em;">Nuevo precio de venta (opcional):
                         <input type="number" min="0" step="0.01" value="${item.nuevoPrecio || ''}" placeholder="Dejar vacío = mantener" style="width:130px;"
@@ -11744,11 +11816,40 @@ function updateCompraItemField(idx, field, value) {
     if (!item) return;
 
     if (field === 'cantidad') item.cantidad = parseInt(value) || 0;
-    else if (field === 'costoUnitario') item.costoUnitario = parseFloat(value) || 0;
+    else if (field === 'bonificado') {
+        item.bonificado = !!value;
+        if (item.bonificado) item.costoUnitario = 0;
+        renderCompraItemsList();
+        return;
+    }
+    else if (field === 'costoUnitario') {
+        item.costoUnitario = parseFloat(value) || 0;
+        if (item.costoUnitario > 0 && item.bonificado) { item.bonificado = false; renderCompraItemsList(); return; }
+    }
     else if (field === 'nuevoPrecio') item.nuevoPrecio = value === '' ? '' : parseFloat(value);
     else if (field === 'precioVenta') item.precioVenta = parseFloat(value) || 0;
 
     calcularTotalCompraFactura();
+}
+
+// Agrega otra línea (tanda) del mismo producto con su propio costo, por ejemplo
+// una parte comprada en promo y otra a precio normal. Todas suman al MISMO stock.
+function agregarTandaCompra(idx) {
+    const base = comprasItemsActuales[idx];
+    if (!base || base.esNuevo) return;
+    comprasItemsActuales.splice(idx + 1, 0, {
+        esNuevo: false,
+        id: base.id,
+        nombre: base.nombre,
+        stockActual: base.stockActual,
+        precioActual: base.precioActual,
+        cantidad: 1,
+        costoUnitario: 0,
+        bonificado: false,
+        nuevoPrecio: '',
+        esTandaExtra: true
+    });
+    renderCompraItemsList(idx + 1);
 }
 
 function quitarItemCompra(idx) {
@@ -11836,7 +11937,8 @@ async function guardarCompra() {
                     productoId: nuevoProducto.id,
                     nombre: item.nombre,
                     cantidad: item.cantidad,
-                    costoUnitario: item.costoUnitario || 0,
+                    costoUnitario: item.bonificado ? 0 : (item.costoUnitario || 0),
+                    bonificado: !!item.bonificado,
                     precioVentaCargado: item.precioVenta
                 });
 
@@ -11862,7 +11964,9 @@ async function guardarCompra() {
                 // El costo del producto se actualiza siempre que se cargue un costo
                 // unitario en la factura, para que vaya quedando al día a medida que
                 // entran nuevas compras.
-                if (item.costoUnitario && Number(item.costoUnitario) > 0) {
+                // Las tandas bonificadas (costo $0) NO pisan el costo del producto: ese costo
+                // queda guardado solo en esa tanda de la factura y se usa al calcular la ganancia.
+                if (!item.bonificado && item.costoUnitario && Number(item.costoUnitario) > 0) {
                     updateData.costo = Number(item.costoUnitario);
                 }
 
@@ -11887,7 +11991,8 @@ async function guardarCompra() {
                     productoId: item.id,
                     nombre: item.nombre,
                     cantidad: item.cantidad,
-                    costoUnitario: item.costoUnitario || 0,
+                    costoUnitario: item.bonificado ? 0 : (item.costoUnitario || 0),
+                    bonificado: !!item.bonificado,
                     nuevoPrecio: seModificoPrecio ? Number(item.nuevoPrecio) : null
                 });
             }
@@ -11989,6 +12094,92 @@ function initGananciaNetaSection() {
     }
 }
 
+/* Costeo FIFO por tandas.
+   - Cada compra aporta una tanda: costo cargado, $0 si fue bonificada, o "estimado"
+     (último costo del producto) si esa línea se cargó sin costo.
+   - El stock que ya existía antes de cargar compras se estima como
+     stock actual + vendido - comprado, y se consume primero (a su último costo).
+   - Cada venta, en orden cronológico, consume de la tanda más vieja disponible.
+   Devuelve, por producto, el costo de lo vendido SOLO en los pedidos del rango. */
+function calcularCostosFIFO(idsSet, comprasRows, pedidosHist, infoProds, idsPedidosRango, esIdReal) {
+    const eventos = [];
+    const comprado = {}, vendido = {};
+
+    comprasRows.forEach(c => {
+        const items = Array.isArray(c.items) ? c.items : [];
+        const base = c.fecha || (c.created_at || '').slice(0, 10);
+        const t = Date.parse(base + 'T00:00:00') || 0;
+        items.forEach(it => {
+            const id = String(it.productoId);
+            if (!idsSet.has(id)) return;
+            const cant = Number(it.cantidad) || 0;
+            if (cant <= 0) return;
+            comprado[id] = (comprado[id] || 0) + cant;
+            eventos.push({ t, orden: 0, tipo: 'compra', id, cant, it });
+        });
+    });
+
+    pedidosHist.forEach(p => {
+        let items = [];
+        try { items = Array.isArray(p.productos) ? p.productos : JSON.parse(p.productos || '[]'); } catch (e) { items = []; }
+        const t = Date.parse(p.created_at) || 0;
+        const enRango = idsPedidosRango.has(String(p.id));
+        items.forEach(it => {
+            if (!esIdReal(it.id)) return;
+            const id = String(it.id);
+            if (!idsSet.has(id)) return;
+            const cant = Number(it.cantidad) || 0;
+            if (cant <= 0) return;
+            vendido[id] = (vendido[id] || 0) + cant;
+            eventos.push({ t, orden: 1, tipo: 'venta', id, cant, enRango });
+        });
+    });
+
+    eventos.sort((a, b) => (a.t - b.t) || (a.orden - b.orden));
+
+    const capas = {};
+    const res = {};
+    idsSet.forEach(id => {
+        const info = infoProds[id] || { stock: 0, costo: 0 };
+        const inicial = Math.max(0, info.stock + (vendido[id] || 0) - (comprado[id] || 0));
+        capas[id] = inicial > 0 ? [{ cant: inicial, costo: info.costo, tipo: 'inicial' }] : [];
+        res[id] = { costoTotal: 0, cantidad: 0, partes: [], sinCosto: false };
+    });
+
+    const sumarParte = (r, tipo, costo, cant) => {
+        r.costoTotal += costo * cant;
+        r.cantidad += cant;
+        if (tipo !== 'bonificado' && costo <= 0) r.sinCosto = true;
+        const ex = r.partes.find(x => x.tipo === tipo && x.costo === costo);
+        if (ex) ex.cant += cant; else r.partes.push({ tipo, costo, cant });
+    };
+
+    eventos.forEach(ev => {
+        const info = infoProds[ev.id] || { stock: 0, costo: 0 };
+        if (ev.tipo === 'compra') {
+            const cu = Number(ev.it.costoUnitario) || 0;
+            if (ev.it.bonificado) capas[ev.id].push({ cant: ev.cant, costo: 0, tipo: 'bonificado' });
+            else if (cu > 0) capas[ev.id].push({ cant: ev.cant, costo: cu, tipo: 'compra' });
+            else capas[ev.id].push({ cant: ev.cant, costo: info.costo, tipo: 'estimado' });
+            return;
+        }
+        // venta: consume de la tanda más vieja
+        let falta = ev.cant;
+        const cola = capas[ev.id];
+        while (falta > 0 && cola.length > 0) {
+            const capa = cola[0];
+            const usa = Math.min(capa.cant, falta);
+            if (ev.enRango) sumarParte(res[ev.id], capa.tipo, capa.costo, usa);
+            capa.cant -= usa;
+            falta -= usa;
+            if (capa.cant <= 0) cola.shift();
+        }
+        if (falta > 0 && ev.enRango) sumarParte(res[ev.id], 'estimado', info.costo, falta);
+    });
+
+    return res;
+}
+
 async function calcularGananciaNeta() {
     const desde = document.getElementById('gananciaDesde').value;
     const hasta = document.getElementById('gananciaHasta').value;
@@ -12084,24 +12275,60 @@ async function calcularGananciaNeta() {
             });
         });
 
-        // 4️⃣ Traer el costo ACTUAL de cada producto vendido (el que se fue
-        //    actualizando con cada factura de compra). Solo se consultan ids
-        //    numéricos reales, para no romper la consulta a "promociones"
-        //    (columna bigint) con ids especiales tipo "VISITA_999".
+        // 4️⃣ Costeo por TANDAS (FIFO). Cada compra guarda el costo real de lo que entró
+        //    (incluidas las tandas bonificadas a $0). Al vender, el stock sale primero de la
+        //    tanda más vieja, así lo regalado o comprado en promo cuesta lo que realmente costó.
+        //    Solo se consultan ids numéricos reales (columna bigint de "promociones").
         const idsProductos = Object.values(productosVendidos).map(p => p.id);
+        const idsSet = new Set(idsProductos.map(String));
 
-        let costosPorProducto = {};
+        let infoProds = {};
+        let comprasRows = [];
+        let pedidosHist = [];
         if (idsProductos.length > 0) {
             const { data: prods, error: errProds } = await supabase
                 .from('promociones')
-                .select('id, costo')
+                .select('id, stock, costo')
                 .in('id', idsProductos);
 
             if (errProds && !/column .*costo.* does not exist/i.test(errProds.message || '')) {
                 throw errProds;
             }
-            (prods || []).forEach(p => { costosPorProducto[String(p.id)] = Number(p.costo) || 0; });
+            (prods || []).forEach(p => { infoProds[String(p.id)] = { stock: Number(p.stock) || 0, costo: Number(p.costo) || 0 }; });
+
+            // Todas las facturas de compra
+            let desdeC = 0;
+            while (true) {
+                const { data: pg, error: errC } = await supabase
+                    .from('compras')
+                    .select('id, fecha, created_at, items')
+                    .order('created_at', { ascending: true })
+                    .range(desdeC, desdeC + PAGE_SIZE - 1);
+                if (errC) throw errC;
+                if (!pg || pg.length === 0) break;
+                comprasRows = comprasRows.concat(pg);
+                if (pg.length < PAGE_SIZE) break;
+                desdeC += PAGE_SIZE;
+            }
+
+            // Todo el historial de ventas (hace falta para saber qué tanda se consumió primero)
+            let desdeP = 0;
+            while (true) {
+                const { data: pg, error: errP } = await supabase
+                    .from('pedidos')
+                    .select('id, created_at, productos')
+                    .order('created_at', { ascending: true })
+                    .range(desdeP, desdeP + PAGE_SIZE - 1);
+                if (errP) throw errP;
+                if (!pg || pg.length === 0) break;
+                pedidosHist = pedidosHist.concat(pg);
+                if (pg.length < PAGE_SIZE) break;
+                desdeP += PAGE_SIZE;
+            }
         }
+
+        const idsPedidosRango = new Set(pedidos.map(p => String(p.id)));
+        const costosFIFO = calcularCostosFIFO(idsSet, comprasRows, pedidosHist, infoProds, idsPedidosRango, esIdProductoReal);
 
         // 5️⃣ Calcular costo de mercadería vendida y armar el detalle
         let costoTotalMercaderia = 0;
@@ -12110,22 +12337,35 @@ async function calcularGananciaNeta() {
         const filas = Object.values(productosVendidos)
             .sort((a, b) => b.ingreso - a.ingreso)
             .map(p => {
-                const costoUnitario = costosPorProducto[String(p.id)] || 0;
-                if (costoUnitario <= 0) hayProductosSinCosto = true;
-                const costoTotalProducto = costoUnitario * p.cantidad;
+                const f = costosFIFO[String(p.id)] || { costoTotal: 0, cantidad: 0, partes: [], sinCosto: true };
+                const costoTotalProducto = f.costoTotal;
+                const costoUnitario = p.cantidad > 0 ? (costoTotalProducto / p.cantidad) : 0;
+                const sinCosto = f.sinCosto;
+                if (sinCosto) hayProductosSinCosto = true;
                 costoTotalMercaderia += costoTotalProducto;
                 const precioVentaProm = p.cantidad > 0 ? (p.ingreso / p.cantidad) : 0;
                 const gananciaProducto = p.ingreso - costoTotalProducto;
 
+                const etiquetaParte = (x) => {
+                    const monto = '$' + x.costo.toLocaleString('es-AR', {maximumFractionDigits:2});
+                    if (x.tipo === 'bonificado') return `${x.cant} × bonificadas ($0)`;
+                    if (x.tipo === 'inicial') return `${x.cant} × stock anterior a ${monto}`;
+                    if (x.tipo === 'estimado') return `${x.cant} × estimado a ${monto}`;
+                    return `${x.cant} × ${monto}`;
+                };
+                const desglose = f.partes.length > 1 || (f.partes[0] && f.partes[0].tipo !== 'compra')
+                    ? `<div style="font-size:11px; color:#64748b; margin-top:2px;">${f.partes.map(etiquetaParte).join(' · ')}</div>`
+                    : '';
+
                 return `
-                    <tr style="border-bottom:1px solid #eee; ${costoUnitario <= 0 ? 'background:#fffbeb;' : ''}">
-                        <td style="padding:8px;">${escapeHtml(p.nombre)}${costoUnitario <= 0 ? ' <span title="Sin costo cargado" style="color:#d97706;">⚠️</span>' : ''}</td>
+                    <tr style="border-bottom:1px solid #eee; ${sinCosto ? 'background:#fffbeb;' : ''}">
+                        <td style="padding:8px;">${escapeHtml(p.nombre)}${sinCosto ? ' <span title="Sin costo cargado" style="color:#d97706;">⚠️</span>' : ''}${desglose}</td>
                         <td style="padding:8px; text-align:right;">${p.cantidad}</td>
                         <td style="padding:8px; text-align:right;">$${precioVentaProm.toLocaleString('es-AR', {maximumFractionDigits:2})}</td>
-                        <td style="padding:8px; text-align:right;">${costoUnitario > 0 ? '$' + costoUnitario.toLocaleString('es-AR') : '<span style="color:#d97706;">sin costo</span>'}</td>
+                        <td style="padding:8px; text-align:right;">${costoUnitario > 0 ? '$' + costoUnitario.toLocaleString('es-AR', {maximumFractionDigits:2}) : (sinCosto ? '<span style="color:#d97706;">sin costo</span>' : '$0')}</td>
                         <td style="padding:8px; text-align:right;">$${p.ingreso.toLocaleString('es-AR')}</td>
-                        <td style="padding:8px; text-align:right;">$${costoTotalProducto.toLocaleString('es-AR')}</td>
-                        <td style="padding:8px; text-align:right; font-weight:bold; color:${gananciaProducto >= 0 ? '#166534' : '#dc2626'};">$${gananciaProducto.toLocaleString('es-AR')}</td>
+                        <td style="padding:8px; text-align:right;">$${costoTotalProducto.toLocaleString('es-AR', {maximumFractionDigits:2})}</td>
+                        <td style="padding:8px; text-align:right; font-weight:bold; color:${gananciaProducto >= 0 ? '#166534' : '#dc2626'};">$${gananciaProducto.toLocaleString('es-AR', {maximumFractionDigits:2})}</td>
                     </tr>
                 `;
             }).join('');

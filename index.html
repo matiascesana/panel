@@ -1117,6 +1117,9 @@ button[onclick*="delete"] {
         
         <label for="modalPrecioAnterior">Precio Anterior ($):</label>
         <input type="number" id="modalPrecioAnterior" min="0" step="0.01">
+
+        <label for="modalCosto">Costo unitario ($):</label>
+        <input type="number" id="modalCosto" min="0" step="0.01" placeholder="Lo que te cuesta cada unidad">
         
         <label for="modalStock">Stock (unidades):</label>
         <input type="number" id="modalStock" min="0" required>
@@ -1601,6 +1604,11 @@ button[onclick*="delete"] {
                 </div>
             </div>
 
+            <div>
+                <label style="display:block; font-size:14px; color:var(--text-muted);">Costo unitario ($)</label>
+                <input type="number" id="newPromoCosto" min="0" step="0.01" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px;" placeholder="Lo que te cuesta cada unidad (para calcular la ganancia)">
+            </div>
+
             <div style="display:flex; gap:10px;">
                 <div style="flex:1;">
                     <label style="display:block; font-size:14px; color:var(--text-muted);">Stock</label>
@@ -1956,6 +1964,7 @@ async function _guardarNuevaPromoImpl() {
     const nombre = document.getElementById('newPromoNombre').value.trim();
     const precio = parseFloat(document.getElementById('newPromoPrecio').value);
     const precioAnterior = parseFloat(document.getElementById('newPromoPrecioAnterior').value) || 0;
+    const costoNuevo = parseFloat(document.getElementById('newPromoCosto').value) || 0;
     const stock = parseInt(document.getElementById('newPromoStock').value) || 0;
     const categoriaId = document.getElementById('newPromoCategoria').value; 
     const tipoId = document.getElementById('newPromoTipo').value || null;
@@ -2005,7 +2014,8 @@ async function _guardarNuevaPromoImpl() {
                     imagen: fileName,
                     categoria_id: categoriaId,
                     tipo_id: tipoId,
-                    precio_anterior: precioAnterior 
+                    precio_anterior: precioAnterior,
+                    costo: costoNuevo
                 }
             ]);
 
@@ -2020,6 +2030,7 @@ async function _guardarNuevaPromoImpl() {
         document.getElementById("newPromoNombre").value = "";
         document.getElementById("newPromoPrecio").value = "";
         document.getElementById("newPromoPrecioAnterior").value = "";
+        document.getElementById("newPromoCosto").value = "";
         document.getElementById("newPromoStock").value = "";
         document.getElementById("newPromoImagen").value = "";
         document.getElementById("newPromoTipo").value = "";
@@ -2110,6 +2121,7 @@ function abrirModalNuevaPromo() {
     document.getElementById('newPromoNombre').value = "";
     document.getElementById('newPromoPrecio').value = "";
     document.getElementById('newPromoPrecioAnterior').value = "";
+    document.getElementById('newPromoCosto').value = "";
     document.getElementById('newPromoStock').value = "";
     document.getElementById('newPromoImagen').value = "";
     document.getElementById('newPromoTipo').value = "";
@@ -2209,6 +2221,10 @@ async function renderCtaCte() {
                 <td style="text-align:center; white-space:nowrap;">
                     <button onclick="verDetalleCtaCte('${c.dni || c.nombre}')">
                         Ver detalle
+                    </button>
+                    <button onclick="verPagosCargadosCtaCte('${String(c.dni || c.nombre).replace(/'/g, '\\\'')}')"
+                        style="background:#6366f1; color:#fff; border:none; padding:8px 10px; border-radius:6px; cursor:pointer; margin-left:6px;">
+                        🧾 Pagos cargados
                     </button>
                     <button onclick="abrirModalPagoCtaCte('${(c.dni || c.nombre)}', '${c.nombre.replace(/'/g, '\\\'' )}', ${c.saldo})"
                         style="background:#10b981; color:#fff; border:none; padding:8px 10px; border-radius:6px; cursor:pointer; margin-left:6px;">
@@ -2367,6 +2383,18 @@ async function verDetalleCtaCte(identificador) {
                 </h3>
                 <p style="color:#10b981; font-weight:bold; margin-top:-8px;">Total pagado (histórico): $${totalPagadoGeneral.toLocaleString('es-AR')}</p>
 
+                <button onclick="verPagosCargadosCtaCte('${String(identificador).replace(/'/g, "\\'")}')"
+                    style="
+                        background:#6366f1;
+                        color:white;
+                        border:none;
+                        padding:10px 20px;
+                        border-radius:6px;
+                        cursor:pointer;
+                        margin-right:8px;">
+                    🧾 Pagos cargados
+                </button>
+
                 <button onclick="cerrarModalCtaCte()"
                     style="
                         background:#777;
@@ -2417,6 +2445,131 @@ async function verDetalleCtaCte(identificador) {
     } catch (err) {
         console.error(err);
         alert('Error al cargar detalle del cliente');
+    }
+}
+
+async function verPagosCargadosCtaCte(identificador) {
+    try {
+        let query = supabase
+            .from('pedidos')
+            .select('id, cliente, pagos');
+
+        if (/^\d+$/.test(String(identificador))) {
+            query = query.eq('dni', identificador);
+        } else {
+            query = query.eq('cliente', identificador);
+        }
+
+        const { data: pedidos, error } = await query;
+        if (error) throw error;
+
+        if (!pedidos || pedidos.length === 0) {
+            return alert('No se encontraron pedidos para este cliente.');
+        }
+
+        const cargas = agruparPagosEnCargas(pedidos).sort((a, b) => {
+            if (a.fecha !== b.fecha) return a.fecha < b.fecha ? 1 : -1;
+            return String(b.cargado_en || '').localeCompare(String(a.cargado_en || ''));
+        });
+
+        const fmt = n => '$' + Number(n || 0).toLocaleString('es-AR');
+        let totEfec = 0, totTransf = 0;
+        const porDestinatario = {};
+
+        const filas = cargas.map(c => {
+            const esTransf = c.metodo !== 'Efectivo';
+            if (esTransf) {
+                totTransf += c.monto;
+                const d = c.destinatario || 'Sin especificar';
+                porDestinatario[d] = (porDestinatario[d] || 0) + c.monto;
+            } else {
+                totEfec += c.monto;
+            }
+
+            const metodoTxt = esTransf
+                ? `Transferencia${c.destinatario ? ' → ' + escapeHtml(c.destinatario) : ''}`
+                : 'Efectivo';
+
+            let cargadoTxt = '—';
+            if (c.cargado_en) {
+                const d = new Date(c.cargado_en);
+                if (!isNaN(d)) {
+                    cargadoTxt = d.toLocaleDateString('es-AR') + ' ' +
+                        d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+                }
+            }
+
+            const fechaTxt = parseFechaLocal(c.fecha).toLocaleDateString('es-AR');
+
+            return `
+                <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:6px;">${fechaTxt}</td>
+                    <td style="padding:6px; color:#666; font-size:0.9em;">${cargadoTxt}</td>
+                    <td style="padding:6px;">${metodoTxt}</td>
+                    <td style="padding:6px; text-align:right; font-weight:bold; color:#10b981;">${fmt(c.monto)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const resumenDest = Object.entries(porDestinatario)
+            .map(([d, m]) => `<div style="display:flex; justify-content:space-between;"><span>↳ ${escapeHtml(d)}</span><span>${fmt(m)}</span></div>`)
+            .join('');
+
+        const html = `
+            <div style="max-height:75vh; overflow-y:auto; padding:10px;">
+                <h2 style="margin-top:0;">🧾 Pagos cargados - ${escapeHtml(pedidos[0].cliente)}</h2>
+
+                ${cargas.length === 0
+                    ? '<p style="color:#999;">Este cliente todavía no tiene pagos cargados.</p>'
+                    : `
+                    <div style="overflow-x:auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                        <thead>
+                            <tr style="background:#eee;">
+                                <th style="text-align:left; padding:6px;">Fecha del pago</th>
+                                <th style="text-align:left; padding:6px;">Cargado el</th>
+                                <th style="text-align:left; padding:6px;">Método</th>
+                                <th style="text-align:right; padding:6px;">Monto total</th>
+                            </tr>
+                        </thead>
+                        <tbody>${filas}</tbody>
+                    </table>
+                    </div>
+
+                    <div style="margin-top:14px; padding:12px; background:#f0fdf4; border-radius:8px; font-size:0.9em;">
+                        <div style="display:flex; justify-content:space-between;"><span>💵 Efectivo</span><b>${fmt(totEfec)}</b></div>
+                        <div style="display:flex; justify-content:space-between; margin-top:4px;"><span>🏦 Transferencias</span><b>${fmt(totTransf)}</b></div>
+                        ${resumenDest ? `<div style="margin:4px 0 0 8px; color:#555; font-size:0.9em;">${resumenDest}</div>` : ''}
+                        <div style="display:flex; justify-content:space-between; margin-top:8px; padding-top:8px; border-top:1px solid #bbf7d0; color:#166534;"><b>Total cargado</b><b>${fmt(totEfec + totTransf)}</b></div>
+                    </div>`
+                }
+
+                <div style="text-align:center; margin-top:15px; position:sticky; bottom:0; background:white; padding-top:10px;">
+                    <button onclick="verDetalleCtaCte('${String(identificador).replace(/'/g, "\\'")}')"
+                        style="background:var(--primary); color:white; border:none; padding:10px 20px; border-radius:6px; cursor:pointer; margin-right:8px;">
+                        ← Volver al detalle
+                    </button>
+                    <button onclick="cerrarModalCtaCte()"
+                        style="background:#777; color:white; border:none; padding:10px 20px; border-radius:6px; cursor:pointer;">
+                        Cerrar
+                    </button>
+                </div>
+            </div>
+        `;
+
+        let modal = document.getElementById('modalCtaCte');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'modalCtaCte';
+            modal.style = 'display:flex; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:99999; align-items:center; justify-content:center;';
+            document.body.appendChild(modal);
+        }
+        modal.innerHTML = `<div style="background:white; width:90%; max-width:700px; border-radius:10px; padding:20px;">${html}</div>`;
+        modal.style.display = 'flex';
+
+    } catch (err) {
+        console.error(err);
+        alert('Error al cargar los pagos del cliente');
     }
 }
 
@@ -2545,6 +2698,11 @@ async function confirmarPagoCtaCte() {
         const montoIngresado = montoRestante;
         let pedidosAfectados = 0;
 
+        // Un mismo pago cargado desde Cta Cte puede repartirse entre varios pedidos.
+        // Todos los pedazos comparten este id para poder mostrarlos como UN solo pago.
+        const pagoCargaId = 'pg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const cargadoEn = new Date().toISOString();
+
         for (const p of pedidos) {
             if (montoRestante <= 0) break;
 
@@ -2566,7 +2724,9 @@ async function confirmarPagoCtaCte() {
                 metodo,
                 destinatario,
                 fecha,
-                origen: 'Cuenta Corriente'
+                origen: 'Cuenta Corriente',
+                pago_id: pagoCargaId,
+                cargado_en: cargadoEn
             };
 
             const nuevoHistorial = [...historialActual, nuevoPago];
@@ -2820,6 +2980,7 @@ async function savePromotionChanges() {
                 precio: newPrecio,
                 // Si el precio anterior es 0 o NaN (vacío), guardamos null
                 precio_anterior: isNaN(newPrecioAnterior) || newPrecioAnterior === 0 ? null : newPrecioAnterior, 
+                costo: parseFloat((document.getElementById('modalCosto') || {}).value) || 0,
                 stock: newStock,
                 unidades_por_caja: parseInt(document.getElementById('modalUpc').value, 10) || null,
                 precio_caja: parseFloat(document.getElementById('modalPrecioCaja').value) || null,
@@ -3205,6 +3366,7 @@ async function openEditModal(promoId) {
         document.getElementById('modalNombre').value = promo.nombre || ''; 
         document.getElementById('modalPrecio').value = promo.precio || 0;
         document.getElementById('modalPrecioAnterior').value = promo.precio_anterior || '';
+        document.getElementById('modalCosto').value = promo.costo || '';
         document.getElementById('modalStock').value = promo.stock || 0;
         document.getElementById('modalUpc').value = promo.unidades_por_caja || '';
         document.getElementById('modalPrecioCaja').value = promo.precio_caja || '';
@@ -6865,7 +7027,7 @@ async function cargarReporteIngresos() {
     while (true) {
         const { data: page, error } = await supabase
             .from('pedidos')
-            .select('cliente, pagos')
+            .select('id, cliente, pagos')
             .range(from, from + PAGE_SIZE - 1);
 
         if (error) {
@@ -6886,39 +7048,21 @@ async function cargarReporteIngresos() {
     let trans = 0;
     let listaFiltrada = [];
 
-    pedidos.forEach(p => {
-        let pagosArray = [];
+    // Cada pago cargado se toma ENTERO (suma de todos los pedidos a los que se
+    // aplicó), en vez de verse partido pedido por pedido.
+    agruparPagosEnCargas(pedidos).forEach(carga => {
+        if (carga.fecha >= desde && carga.fecha <= hasta) {
+            if (carga.metodo === 'Efectivo') efec += carga.monto;
+            else trans += carga.monto;
 
-        try {
-            pagosArray = Array.isArray(p.pagos)
-                ? p.pagos
-                : JSON.parse(p.pagos || "[]");
-        } catch (e) {
-            pagosArray = [];
+            listaFiltrada.push({
+                fecha: carga.fecha,
+                cliente: carga.cliente,
+                metodo: carga.metodo,
+                monto: carga.monto,
+                destinatario: carga.destinatario || "-"
+            });
         }
-
-        pagosArray.forEach(pago => {
-            if (!pago.fecha) return;
-
-            const fechaPago = normalizarFechaPago(pago.fecha);
-
-            if (fechaPago >= desde && fechaPago <= hasta) {
-
-                const monto = parseFloat(pago.monto || 0);
-                const metodo = pago.metodo || "Efectivo";
-
-                if (metodo === 'Efectivo') efec += monto;
-                else trans += monto;
-
-                listaFiltrada.push({
-    fecha: fechaPago,
-    cliente: p.cliente,
-    metodo: metodo,
-    monto: monto,
-    destinatario: pago.destinatario || "-"
-});
-            }
-        });
     });
 
     // 👉 GUARDAR PARA PDF
@@ -6979,6 +7123,66 @@ async function cargarReporteIngresos() {
 function normalizarFechaPago(fechaStr) {
     if (!fechaStr) return fechaStr;
     return String(fechaStr).slice(0, 10);
+}
+
+/* Junta los pagos de uno o varios pedidos en "cargas" completas.
+   Cuando un pago de Cta Cte se reparte entre varios pedidos (FIFO), queda
+   guardado en pedazos; acá se vuelve a sumar para mostrarlo como un único pago.
+   - Pagos nuevos: se unen por el mismo pago_id.
+   - Pagos viejos de Cta Cte (sin pago_id): se unen si coinciden cliente, fecha,
+     método y destinatario.
+   - Pagos cargados desde un pedido puntual: quedan como pagos individuales.
+   Recibe: [{ id, cliente, pagos }]  Devuelve: [{ fecha, cargado_en, cliente, metodo,
+   destinatario, monto, origen, pedidos:[ids] }] */
+function agruparPagosEnCargas(pedidos) {
+    const grupos = new Map();
+    let sueltos = 0;
+
+    (pedidos || []).forEach(p => {
+        let pagosArray = [];
+        try {
+            pagosArray = Array.isArray(p.pagos) ? p.pagos : JSON.parse(p.pagos || "[]");
+        } catch (e) {
+            pagosArray = [];
+        }
+
+        pagosArray.forEach(pago => {
+            if (!pago || !pago.fecha) return;
+
+            const fecha = normalizarFechaPago(pago.fecha);
+            const metodo = pago.metodo || "Efectivo";
+            const destinatario = pago.destinatario || "";
+            const monto = parseFloat(pago.monto || 0) || 0;
+
+            let clave;
+            if (pago.pago_id) {
+                clave = 'id|' + pago.pago_id;
+            } else if (pago.origen === 'Cuenta Corriente') {
+                clave = ['cc', p.cliente, fecha, metodo, destinatario].join('|');
+            } else {
+                clave = 'solo|' + (sueltos++);
+            }
+
+            let g = grupos.get(clave);
+            if (!g) {
+                g = {
+                    fecha,
+                    cargado_en: pago.cargado_en || null,
+                    cliente: p.cliente,
+                    metodo,
+                    destinatario,
+                    monto: 0,
+                    origen: pago.origen || 'Pedido',
+                    pedidos: []
+                };
+                grupos.set(clave, g);
+            }
+            g.monto += monto;
+            if (p.id != null && !g.pedidos.includes(p.id)) g.pedidos.push(p.id);
+        });
+    });
+
+    return Array.from(grupos.values());
 }
 
 function actualizarUIFianzas(efec, trans, desde, hasta, lista) {

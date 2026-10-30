@@ -4535,6 +4535,13 @@ function comboRegalos(c) {
   return c.regalo_producto_id ? [{ id: c.regalo_producto_id, nombre: c.regalo_nombre || '' }] : [];
 }
 
+// Modo de bonificación de los productos cargados:
+//  'elegir' (por defecto): el cliente elige entre ellos; total de unidades = unidades por beneficio x grupos completos.
+//  'todos': se bonifican TODOS los productos cargados, "uno de cada uno" (x grupos completos).
+function comboModoTodos(c) {
+  return !!c && c.modo_regalos === 'todos' && comboRegalos(c).length > 1;
+}
+
 function comboEsPrecioEspecial(c) {
   return c.beneficio_tipo === 'precio' && c.precio_especial !== null && c.precio_especial !== undefined && c.precio_especial !== '';
 }
@@ -4562,7 +4569,9 @@ function comboExplicacionHTML(c) {
     `<b>${r.cantidad}</b> ${r.tipo === 'producto' ? 'unidad(es) de' : 'producto(s) de la categoría'} <b>${escCombo(r.nombre || '?')}</b>`).join(' <b>+</b> ');
   const regalos = comboRegalos(c);
   const cant = parseInt(c.regalo_cantidad, 10) || 1;
-  const que = regalos.length > 1
+  const que = comboModoTodos(c)
+    ? `<b>${cant}</b> de cada uno de estos productos: <b>${regalos.map(r => escCombo(r.nombre)).join(' + ')}</b>`
+    : regalos.length > 1
     ? `<b>${cant}</b> unidad(es) a elección entre: <b>${regalos.map(r => escCombo(r.nombre)).join(' / ')}</b>`
     : `<b>${cant} × ${escCombo((regalos[0] || {}).nombre || '')}</b>`;
   const rep = c.repetir
@@ -4672,15 +4681,21 @@ function aplicarCombos(lineas, origCombos) {
     const ganados = veces * (parseInt(c.regalo_cantidad, 10) || 1);
     const restante = combosRestante(c, origCombos);
 
-    // Repartir las unidades ganadas entre los productos elegidos por el cliente (en orden del carrito)
+    // Reparto de la bonificación en las líneas del carrito (en orden del carrito)
+    //  - modo 'elegir': las unidades ganadas se reparten libremente entre los productos elegidos por el cliente.
+    //  - modo 'todos': cada producto cargado se bonifica hasta "porProd" unidades (uno de cada uno x grupos completos).
+    const todos = comboModoTodos(c);
+    const porProd = veces * (parseInt(c.regalo_cantidad, 10) || 1);
     let pendiente = Math.min(ganados, restante);
+    let cupoRest = restante;
     let aplicados = 0;
     const detalle = [];
     lineas.forEach(l => {
-      if (pendiente <= 0) return;
       if (!giftIds.has(String(l.id)) || l.combo_id || l.precioManual) return;
       const cant = Number(l.cantidad) || 0;
-      const ap = Math.min(pendiente, cant);
+      const tope = todos ? Math.min(porProd, cupoRest) : pendiente;
+      if (tope <= 0) return;
+      const ap = Math.min(tope, cant);
       if (ap <= 0) return;
       const base = Number(l.precio) || 0;
       const unit = comboPrecioUnitBenef(c, base);
@@ -4692,13 +4707,29 @@ function aplicarCombos(lineas, origCombos) {
       l.precio_anterior = base;
       l.combo_id = c.id;
       l.combo_unid = ap;
-      pendiente -= ap;
+      if (todos) cupoRest -= ap; else pendiente -= ap;
       aplicados += ap;
-      detalle.push({ nombre: l.nombre, unidades: ap });
+      detalle.push({ id: l.id, nombre: l.nombre, unidades: ap });
     });
 
-    estado.push({ combo: c, progreso, regalos, detalle, ganados, aplicados, restante,
-                  falta: Math.max(0, Math.min(ganados, restante) - aplicados) });
+    // Qué falta agregar al pedido para completar el beneficio
+    let faltantes = [];
+    let falta;
+    let ganadosTot = ganados;
+    if (todos) {
+      ganadosTot = porProd * regalos.length;
+      let cr = cupoRest;
+      regalos.forEach(r => {
+        const ya = (detalle.find(d => String(d.id) === String(r.id)) || { unidades: 0 }).unidades;
+        const f = Math.max(0, Math.min(porProd - ya, cr));
+        if (f > 0) { faltantes.push({ id: r.id, nombre: r.nombre, falta: f }); cr -= f; }
+      });
+      falta = faltantes.reduce((s, x) => s + x.falta, 0);
+    } else {
+      falta = Math.max(0, Math.min(ganados, restante) - aplicados);
+    }
+
+    estado.push({ combo: c, progreso, regalos, detalle, ganados: ganadosTot, aplicados, restante, todos, faltantes, falta });
   });
   return { cambio: antes !== sig(), estado };
 }
@@ -4725,11 +4756,13 @@ async function ajustarCuposCombos(orig, nuevo) {
 // fnAgregar se invoca como fnAgregar(comboId, cantidad, productoId)
 function bannerCombosHTML(estado, fnAgregar) {
   const items = [];
+  const BTN = 'margin:2px 4px 2px 0;padding:3px 10px;border:none;border-radius:6px;background:#f39c12;color:#fff;font-weight:bold;cursor:pointer;';
   (estado || []).forEach(e => {
     const c = e.combo;
     const benef = comboBeneficioTxt(c);
     const cn = escCombo(c.nombre);
     const multi = e.regalos.length > 1;
+    const mk = (cant, id, txt) => `<button type="button" onclick="${fnAgregar}(${c.id}, ${cant}, '${escCombo(id)}')" style="${BTN}">${txt}</button>`;
     const nomRegalo = multi
       ? 'un producto a elegir (' + e.regalos.map(r => escCombo(r.nombre)).join(' / ') + ')'
       : `<b>${escCombo(e.regalos[0].nombre)}</b>`;
@@ -4740,14 +4773,27 @@ function bannerCombosHTML(estado, fnAgregar) {
       items.push(`<div style="color:#166534;">🎁 ${det} ${benef} (combo "${cn}") · quedan ${quedan} en promo</div>`);
     }
     if (e.falta > 0) {
-      const btns = e.regalos.map(r =>
-        `<button type="button" onclick="${fnAgregar}(${c.id}, ${e.falta}, '${escCombo(r.id)}')" style="margin:2px 4px 2px 0;padding:3px 10px;border:none;border-radius:6px;background:#f39c12;color:#fff;font-weight:bold;cursor:pointer;">${multi ? '+ ' + escCombo(r.nombre) : 'Agregar'}</button>`).join('');
-      items.push(`<div style="color:#92400e;">🎁 Ganó ${e.falta} × ${nomRegalo} ${benef} (combo "${cn}") ${multi ? '<br>' : ''}${btns}</div>`);
+      if (e.todos) {
+        // Se bonifican todos: un botón por cada producto que todavía falta agregar
+        const btns = e.faltantes.map(f => mk(f.falta, f.id, '+ ' + escCombo(f.nombre) + (f.falta > 1 ? ' ×' + f.falta : ''))).join('');
+        const lista = e.faltantes.map(f => `${f.falta} × <b>${escCombo(f.nombre)}</b>`).join(' + ');
+        items.push(`<div style="color:#92400e;">🎁 Ganó ${lista} ${benef} (combo "${cn}")<br>${btns}</div>`);
+      } else {
+        // Elegir: si ganó más de una unidad, puede sumar de a una (mezclando productos) o todas del mismo
+        const btns = e.regalos.map(r => {
+          if (!multi) return mk(e.falta, r.id, 'Agregar');
+          return e.falta > 1
+            ? mk(1, r.id, '+1 ' + escCombo(r.nombre)) + mk(e.falta, r.id, '+' + e.falta + ' ' + escCombo(r.nombre))
+            : mk(1, r.id, '+ ' + escCombo(r.nombre));
+        }).join('');
+        items.push(`<div style="color:#92400e;">🎁 Ganó ${e.falta} × ${nomRegalo} ${benef} (combo "${cn}") ${multi ? '<br>' : ''}${btns}</div>`);
+      }
     } else if (e.ganados > 0 && e.restante <= 0 && e.aplicados === 0) {
       items.push(`<div style="color:#c0392b;">❌ Combo "${cn}" AGOTADO: ya no quedan unidades en promo</div>`);
     } else if (e.ganados === 0 && e.restante > 0 && e.progreso.some(p => p.tiene > 0)) {
       const faltan = e.progreso.filter(p => p.tiene < p.req).map(p => `${p.req - p.tiene} × ${escCombo(p.nombre)}`).join(' y ');
-      items.push(`<div style="color:#475569;">🎁 Combo "${cn}": con ${faltan} más, ${nomRegalo} ${benef} (quedan ${e.restante} en promo)</div>`);
+      const que = e.todos ? 'todos: ' + e.regalos.map(r => escCombo(r.nombre)).join(' + ') : nomRegalo;
+      items.push(`<div style="color:#475569;">🎁 Combo "${cn}": con ${faltan} más, ${que} ${benef} (quedan ${e.restante} en promo)</div>`);
     }
   });
   if (!items.length) return '';
@@ -4816,7 +4862,7 @@ async function renderCombosList() {
             </div>
             <div style="margin-top:6px;color:#333;">
                 Llevando ${reqsTxt}
-                → <b>${c.regalo_cantidad} ×</b> ${multi ? 'a elegir entre:' : ''} ${benef}
+                → ${comboModoTodos(c) ? `<b>${c.regalo_cantidad} de cada uno</b> (se bonifican todos):` : `<b>${c.regalo_cantidad} ×</b> ${multi ? 'a elegir entre:' : ''}`} ${benef}
                 ${c.repetir ? '<span style="color:#777;">(se repite por cada grupo completo)</span>' : '<span style="color:#777;">(una sola vez por pedido)</span>'}
             </div>
             <div style="margin-top:6px;">${chips}</div>
@@ -4875,6 +4921,7 @@ async function abrirModalCombo(id) {
     window._cbReqs = combo ? comboRequisitos(combo).map(r => ({ ...r })) : [{ tipo: 'categoria', id: '', nombre: '', cantidad: 10 }];
     window._cbRegalos = combo ? comboRegalos(combo).map(r => ({ ...r })) : [];
     window._cbResultados = [];
+    window._cbComboOrig = combo;
 
     let benTipo = 'gratis', benValor = '';
     if (combo) {
@@ -4910,10 +4957,22 @@ async function abrirModalCombo(id) {
         <input id="cbRegBuscar" style="${CB_INP}" placeholder="Buscar producto (ej: oxidante) y tocá para agregar..." oninput="cbBuscar(this.value,'reg',0)" autocomplete="off">
         <div id="cbRegSug" style="${CB_SUG}"></div>
 
+        <div id="cbModoBox" style="margin-top:10px;padding:8px 10px;background:#f5f5ff;border:1px solid #c7d2fe;border-radius:8px;font-size:13px;line-height:1.5;">
+            <div style="font-weight:bold;margin-bottom:4px;">¿Cómo se bonifican los productos cargados?</div>
+            <label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;">
+                <input type="radio" name="cbModo" value="elegir" onchange="cbResumen()" style="margin-top:3px;" ${combo && combo.modo_regalos === 'todos' ? '' : 'checked'}>
+                <span><b>El cliente elige</b> entre ellos (uno de los cargados). Si lleva el doble de lo requerido (y tildaste "Repetir"), puede elegir más de uno, del mismo o de otro.</span>
+            </label>
+            <label style="display:flex;gap:8px;align-items:flex-start;">
+                <input type="radio" name="cbModo" value="todos" onchange="cbResumen()" style="margin-top:3px;" ${combo && combo.modo_regalos === 'todos' ? 'checked' : ''}>
+                <span><b>Se bonifican todos</b>: uno de cada uno (sin poder llevar dos del mismo). Recién con el doble de lo requerido (y "Repetir") se bonifican dos de cada uno.</span>
+            </label>
+        </div>
+
         <label style="${CB_LBL}">3) Beneficio</label>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
             <div>
-                <span style="font-size:12px;color:#555;">Unidades por beneficio</span>
+                <span style="font-size:12px;color:#555;">Unidades por beneficio <span style="color:#888;">(en modo "todos", de cada producto)</span></span>
                 <input id="cbRegaloCant" type="number" min="1" style="${CB_INP}" value="${combo ? combo.regalo_cantidad : 1}" oninput="cbResumen()">
             </div>
             <div>
@@ -5083,7 +5142,11 @@ function cbResumen() {
     const repetir = document.getElementById('cbRepetir').checked;
     const ben = cbBeneficioActual();
     if (!reqs.length || !regalos.length) { el.innerHTML = '<span style="color:#777;">📋 Completá los pasos para ver el resumen del combo.</span>'; return; }
-    const que = regalos.length > 1
+    const radTodos = document.querySelector('input[name="cbModo"][value="todos"]');
+    const todosOn = !!(radTodos && radTodos.checked) && regalos.length > 1;
+    const que = todosOn
+        ? `<b>${cant}</b> de cada uno: ${regalos.map(r => escCombo(r.nombre)).join(' + ')}`
+        : regalos.length > 1
         ? `<b>${cant}</b> unidad(es) a elección entre: ${regalos.map(r => escCombo(r.nombre)).join(' / ')}`
         : `<b>${cant} × ${escCombo(regalos[0].nombre)}</b>`;
     el.innerHTML = `📋 <b>Resumen:</b> si el cliente lleva ${reqs.join(' + ')} → ${que} ${ben.txt}${repetir ? ' (se repite por cada grupo completo)' : ' (una sola vez por pedido)'}.`;
@@ -5103,6 +5166,9 @@ async function guardarCombo() {
     if (reqs.some(r => r.cantidad < 1)) return alert('Indicá la cantidad de cada requisito (mínimo 1).');
     if (!regalos.length) return alert('Elegí al menos un producto en promoción.');
     if (!regaloCant || regaloCant < 1) return alert('Indicá las unidades por beneficio.');
+    const modoSel = document.querySelector('input[name="cbModo"]:checked');
+    const modoRegalos = (modoSel && modoSel.value === 'todos') ? 'todos' : 'elegir';
+    if (modoRegalos === 'todos' && regalos.length < 2) return alert('Para bonificar "todos, uno de cada uno" tenés que cargar al menos 2 productos en promoción.');
     if (ben.tipo === 'pct' && (isNaN(ben.pct) || ben.pct <= 0 || ben.pct > 100)) return alert('El descuento debe estar entre 1 y 100.');
     if (ben.tipo === 'precio' && (isNaN(ben.precio) || ben.precio < 0)) return alert('Indicá el precio especial por unidad.');
     if (!cupo || cupo < 1) return alert('Indicá el cupo total de unidades en promo.');
@@ -5126,10 +5192,15 @@ async function guardarCombo() {
         regalo_producto_id: regalos[0].id,
         regalo_nombre: regalos.map(r => r.nombre).join(' / ')
     };
+    // Campo nuevo: solo se envía si se eligió "todos", o si el combo ya tenía la columna (para poder volver a "elegir")
+    const orig = window._cbComboOrig;
+    if (modoRegalos === 'todos' || (orig && Object.prototype.hasOwnProperty.call(orig, 'modo_regalos'))) {
+        payload.modo_regalos = modoRegalos;
+    }
     const res = id
         ? await supabase.from('combos').update(payload).eq('id', id)
         : await supabase.from('combos').insert([{ ...payload, cupo_usado: 0 }]);
-    if (res.error) return alert('Error al guardar: ' + res.error.message + '\n\n¿Ejecutaste la migración SQL de combos (columnas requisitos, regalos, beneficio_tipo, precio_especial)?');
+    if (res.error) return alert('Error al guardar: ' + res.error.message + '\n\n¿Ejecutaste la migración SQL de combos (columnas requisitos, regalos, beneficio_tipo, precio_especial) y la del modo de bonificación (columna modo_regalos)?');
 
     document.getElementById('comboModalOverlay').remove();
     await cargarCombos();
